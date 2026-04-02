@@ -1,4 +1,5 @@
 use anchor_lang::prelude::*;
+use anchor_spl::token::Mint;
 
 declare_id!("HfTwgCwDTHpfrCKkgrruiuHaMKj79AVjyQSTwyoH9NVy");
 
@@ -224,8 +225,7 @@ pub struct InitPool<'info> {
     )]
     pub pool: Account<'info, LendingPool>,
 
-    /// CHECK: token mint address, stored in pool state. Validated at deposit time.
-    pub token_mint: UncheckedAccount<'info>,
+    pub token_mint: Account<'info, Mint>,
 
     #[account(mut)]
     pub authority: Signer<'info>,
