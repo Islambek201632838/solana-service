@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     solana_ws_url: str = "wss://api.devnet.solana.com"
     ai_agent_keypair_path: str = "./keys/ai-agent.json"
     program_id: str = ""
+    pool_authority: str = ""
 
     # Timings
     ai_cycle_interval: int = 600  # 10 min

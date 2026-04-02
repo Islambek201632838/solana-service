@@ -38,52 +38,52 @@ class AiEngine:
         return self._fallback_decision(quant_report)
 
     def _build_prompt(self, report: dict) -> str:
-        return f"""You are an AI risk manager for a Solana DeFi lending protocol.
+        return f"""Ты — AI риск-менеджер для Solana DeFi лендинг-протокола.
 
-Based on the following market analysis, decide the optimal protocol parameters.
+На основе рыночного анализа ниже, определи оптимальные параметры протокола.
 
-## Current Market Analysis
-- SOL Price: ${report.get('sol_price', 0):.2f}
-- 24h Change: {report.get('price_change_24h', 0):.2f}%
+## Текущий рыночный анализ
+- Цена SOL: ${report.get('sol_price', 0):.2f}
+- Изменение за 24ч: {report.get('price_change_24h', 0):.2f}%
 - RSI: {report.get('rsi', 50):.1f}
 - MACD: {json.dumps(report.get('macd', {}))}
-- Bollinger: {json.dumps(report.get('bollinger', {}))}
-- ATR: {report.get('atr', 0)}
+- Полосы Боллинджера: {json.dumps(report.get('bollinger', {}))}
+- ATR (волатильность): {report.get('atr', 0)}
 - EMA Crossover: {report.get('ema_crossover', 'no_cross')}
 
-## Risk Analysis
-- Risk Score: {report.get('risk_score', 50)}/100
-- Risk Level: {report.get('risk_level', 'medium')}
-- Volatility: {json.dumps(report.get('volatility', {}))}
-- Anomaly: {json.dumps(report.get('anomaly', {}))}
-- Trend: {json.dumps(report.get('trend', {}))}
+## Анализ рисков
+- Оценка риска: {report.get('risk_score', 50)}/100
+- Уровень риска: {report.get('risk_level', 'medium')}
+- Волатильность: {json.dumps(report.get('volatility', {}))}
+- Аномалия: {json.dumps(report.get('anomaly', {}))}
+- Тренд: {json.dumps(report.get('trend', {}))}
 
-## Pool State
-- Current Rate: {report.get('current_rate_bps', 500)} bps ({report.get('current_rate_bps', 500) / 100}%)
-- Utilization: {report.get('utilization', 0):.2%}
-- Optimal Rate (curve): {report.get('optimal_rate_bps', 500)} bps
-- Predicted Utilization: {report.get('predicted_utilization', 0):.2%}
+## Состояние пула
+- Текущая ставка: {report.get('current_rate_bps', 500)} bps ({report.get('current_rate_bps', 500) / 100}%)
+- Утилизация: {report.get('utilization', 0):.2%}
+- Оптимальная ставка (кривая): {report.get('optimal_rate_bps', 500)} bps
+- Прогноз утилизации: {report.get('predicted_utilization', 0):.2%}
 
-## Math Signal
-- Recommended Direction: {report.get('recommended_rate_direction', 'hold')}
-- Math Confidence: {report.get('math_confidence', 0)}%
-- Votes: {json.dumps(report.get('votes', {}))}
+## Математический сигнал
+- Рекомендация: {report.get('recommended_rate_direction', 'hold')}
+- Уверенность мат. модели: {report.get('math_confidence', 0)}%
+- Голоса индикаторов: {json.dumps(report.get('votes', {}))}
 
-## Rules
-- interest_rate_bps must be between 100 and 2000
-- collateral_ratio_bps must be between 12000 and 20000
-- max_borrow_limit in token units (6 decimals), reasonable range 1B-50B
-- Change from current rate must be ≤ 20%
-- confidence must be 0-100
-- risk_level must be one of: low, medium, high, critical
+## Правила (СТРОГО соблюдай)
+- interest_rate_bps: от 100 до 2000
+- collateral_ratio_bps: от 12000 до 20000
+- max_borrow_limit: в токенах с 6 decimals, диапазон 1B-50B
+- Изменение ставки от текущей ≤ 20%
+- confidence: от 0 до 100
+- risk_level: только low, medium, high, critical
 
-Respond with ONLY valid JSON (no markdown, no explanation):
+Ответь ТОЛЬКО валидным JSON (без markdown, без пояснений):
 {{
-  "interest_rate_bps": <number>,
-  "collateral_ratio_bps": <number>,
-  "max_borrow_limit": <number>,
-  "reasoning_short": "<max 200 chars explaining your decision>",
-  "confidence": <number 0-100>,
+  "interest_rate_bps": <число>,
+  "collateral_ratio_bps": <число>,
+  "max_borrow_limit": <число>,
+  "reasoning_short": "<макс 200 символов, объяснение решения на английском>",
+  "confidence": <число 0-100>,
   "risk_level": "<low|medium|high|critical>"
 }}"""
 
