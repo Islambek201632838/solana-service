@@ -18,7 +18,7 @@ class Settings(BaseSettings):
     pool_address: str = ""
 
     # Timings
-    ai_cycle_interval: int = 600  # 10 min
+    ai_cycle_interval: int = 660  # 11 min (contract cooldown = 10 min + 1 min buffer)
     price_watch_interval: int = 30
     health_check_interval: int = 60
 
