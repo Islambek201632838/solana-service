@@ -4,41 +4,31 @@ All functions are stateless and operate on price arrays.
 """
 
 import numpy as np
+import pandas as pd
 
 
 def calc_ema(prices: list[float], period: int) -> np.ndarray:
-    """Exponential Moving Average."""
-    arr = np.array(prices, dtype=float)
-    ema = np.zeros_like(arr)
-    ema[0] = arr[0]
-    k = 2.0 / (period + 1)
-    for i in range(1, len(arr)):
-        ema[i] = arr[i] * k + ema[i - 1] * (1 - k)
-    return ema
+    """Exponential Moving Average (vectorized via pandas)."""
+    return pd.Series(prices, dtype=float).ewm(span=period, adjust=False).mean().to_numpy()
 
 
 def calc_rsi(prices: list[float], period: int = 14) -> float:
-    """Relative Strength Index (Wilder's smoothing).
+    """Relative Strength Index (Wilder's smoothing, vectorized).
 
     Returns RSI value (0-100) for the most recent price.
     Requires at least period+1 data points.
     """
     arr = np.array(prices, dtype=float)
     if len(arr) < period + 1:
-        return 50.0  # neutral if insufficient data
+        return 50.0
 
     deltas = np.diff(arr)
     gains = np.where(deltas > 0, deltas, 0.0)
     losses = np.where(deltas < 0, -deltas, 0.0)
 
-    # Initial average
-    avg_gain = np.mean(gains[:period])
-    avg_loss = np.mean(losses[:period])
-
-    # Wilder's smoothing
-    for i in range(period, len(gains)):
-        avg_gain = (avg_gain * (period - 1) + gains[i]) / period
-        avg_loss = (avg_loss * (period - 1) + losses[i]) / period
+    # Wilder's smoothing via pandas ewm (com = period - 1)
+    avg_gain = pd.Series(gains).ewm(com=period - 1, min_periods=period).mean().iloc[-1]
+    avg_loss = pd.Series(losses).ewm(com=period - 1, min_periods=period).mean().iloc[-1]
 
     if avg_loss == 0:
         return 100.0
@@ -138,11 +128,8 @@ def calc_atr(
         ),
     )
 
-    # Wilder's smoothing
-    atr = np.mean(tr[:period])
-    for i in range(period, len(tr)):
-        atr = (atr * (period - 1) + tr[i]) / period
-
+    # Wilder's smoothing via pandas ewm
+    atr = pd.Series(tr).ewm(com=period - 1, min_periods=period).mean().iloc[-1]
     return round(float(atr), 4)
 
 
