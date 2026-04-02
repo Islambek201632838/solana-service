@@ -76,8 +76,120 @@ pub mod solana_ai_lend {
         Ok(())
     }
 
+    /// AI agent updates pool parameters with guard rails.
+    pub fn update_parameters(ctx: Context<UpdateParameters>, params: UpdateParams) -> Result<()> {
+        let pool = &ctx.accounts.pool;
+        require!(!pool.is_frozen, LendError::ProtocolFrozen);
+        let now = Clock::get()?.unix_timestamp;
+
+        // Cooldown check
+        let elapsed = now.checked_sub(pool.last_update).ok_or(LendError::MathOverflow)?;
+        require!(elapsed >= pool.update_cooldown, LendError::CooldownActive);
+
+        // Rate bounds
+        require!(params.new_interest_rate_bps >= pool.min_interest_rate_bps, LendError::RateTooLow);
+        require!(params.new_interest_rate_bps <= pool.max_interest_rate_bps, LendError::RateTooHigh);
+
+        // Collateral bounds
+        require!(params.new_collateral_ratio_bps >= pool.min_collateral_ratio_bps, LendError::CollateralTooLow);
+        require!(params.new_collateral_ratio_bps <= pool.max_collateral_ratio_bps, LendError::CollateralTooHigh);
+
+        // Max 20% change on rate
+        let rate_diff = if params.new_interest_rate_bps > pool.interest_rate_bps {
+            params.new_interest_rate_bps - pool.interest_rate_bps
+        } else {
+            pool.interest_rate_bps - params.new_interest_rate_bps
+        };
+        let max_rate_change = pool.interest_rate_bps.max(1) / 5; // 20%, min 1 to avoid div-by-zero
+        require!(rate_diff <= max_rate_change, LendError::ChangeTooLarge);
+
+        // Max 20% change on collateral ratio
+        let col_diff = if params.new_collateral_ratio_bps > pool.collateral_ratio_bps {
+            params.new_collateral_ratio_bps - pool.collateral_ratio_bps
+        } else {
+            pool.collateral_ratio_bps - params.new_collateral_ratio_bps
+        };
+        let max_col_change = pool.collateral_ratio_bps.max(1) / 5;
+        require!(col_diff <= max_col_change, LendError::ChangeTooLarge);
+
+        // Reasoning length
+        require!(params.reasoning_short.len() <= 256, LendError::ReasoningTooLong);
+
+        // Save old values for log
+        let old_rate = pool.interest_rate_bps;
+        let old_collateral = pool.collateral_ratio_bps;
+        let old_max_borrow = pool.max_borrow_limit;
+        let update_number = pool.total_ai_updates;
+
+        // Update pool
+        let pool = &mut ctx.accounts.pool;
+        pool.interest_rate_bps = params.new_interest_rate_bps;
+        pool.collateral_ratio_bps = params.new_collateral_ratio_bps;
+        pool.max_borrow_limit = params.new_max_borrow_limit;
+        pool.last_update = now;
+        pool.total_ai_updates = pool.total_ai_updates.checked_add(1).ok_or(LendError::MathOverflow)?;
+
+        // Update mood based on risk level
+        pool.current_mood = match params.risk_level {
+            RiskLevel::Low => ProtocolMood::Thriving,
+            RiskLevel::Medium => ProtocolMood::Cautious,
+            RiskLevel::High => ProtocolMood::Defensive,
+            RiskLevel::Critical => ProtocolMood::Emergency,
+        };
+
+        // Write decision log
+        let log = &mut ctx.accounts.decision_log;
+        log.pool = pool.key();
+        log.update_number = update_number;
+        log.timestamp = now;
+        log.old_interest_rate = old_rate;
+        log.new_interest_rate = params.new_interest_rate_bps;
+        log.old_collateral_ratio = old_collateral;
+        log.new_collateral_ratio = params.new_collateral_ratio_bps;
+        log.old_max_borrow = old_max_borrow;
+        log.new_max_borrow = params.new_max_borrow_limit;
+        log.reasoning_hash = params.reasoning_hash;
+        log.reasoning_short = params.reasoning_short.clone();
+        log.confidence = params.confidence;
+        log.risk_level = params.risk_level;
+        log.bump = ctx.bumps.decision_log;
+
+        emit!(ParametersUpdatedEvent {
+            pool: pool.key(),
+            ai_agent: ctx.accounts.ai_agent.key(),
+            old_rate,
+            new_rate: params.new_interest_rate_bps,
+            old_collateral,
+            new_collateral: params.new_collateral_ratio_bps,
+            reasoning_short: params.reasoning_short,
+            risk_level: params.risk_level,
+            confidence: params.confidence,
+            mood: pool.current_mood,
+            update_number,
+            timestamp: now,
+        });
+
+        Ok(())
+    }
+
+    /// Emergency freeze — authority only. Blocks deposit, borrow, deposit_collateral.
+    pub fn emergency_freeze(ctx: Context<EmergencyFreeze>) -> Result<()> {
+        let pool = &mut ctx.accounts.pool;
+        pool.is_frozen = true;
+
+        let now = Clock::get()?.unix_timestamp;
+        emit!(EmergencyFreezeEvent {
+            pool: pool.key(),
+            authority: ctx.accounts.authority.key(),
+            timestamp: now,
+        });
+
+        Ok(())
+    }
+
     pub fn deposit(ctx: Context<Deposit>, amount: u64) -> Result<()> {
         require!(amount > 0, LendError::ZeroAmount);
+        require!(!ctx.accounts.pool.is_frozen, LendError::ProtocolFrozen);
 
         let pool = &mut ctx.accounts.pool;
         let position = &mut ctx.accounts.user_position;
@@ -176,6 +288,7 @@ pub mod solana_ai_lend {
     /// Deposit SOL as collateral.
     pub fn deposit_collateral(ctx: Context<DepositCollateral>, amount: u64) -> Result<()> {
         require!(amount > 0, LendError::ZeroAmount);
+        require!(!ctx.accounts.pool.is_frozen, LendError::ProtocolFrozen);
 
         // Transfer SOL: user → pool PDA
         system_program::transfer(
@@ -264,6 +377,7 @@ pub mod solana_ai_lend {
     /// Borrow aiUSDC against SOL collateral.
     pub fn borrow(ctx: Context<Borrow>, amount: u64) -> Result<()> {
         require!(amount > 0, LendError::ZeroAmount);
+        require!(!ctx.accounts.pool.is_frozen, LendError::ProtocolFrozen);
 
         let pool = &ctx.accounts.pool;
         let position = &ctx.accounts.user_position;
@@ -511,6 +625,17 @@ pub mod solana_ai_lend {
 // ============================================================
 
 #[derive(AnchorSerialize, AnchorDeserialize)]
+pub struct UpdateParams {
+    pub new_interest_rate_bps: u16,
+    pub new_collateral_ratio_bps: u16,
+    pub new_max_borrow_limit: u64,
+    pub reasoning_hash: [u8; 32],
+    pub reasoning_short: String,
+    pub confidence: u8,
+    pub risk_level: RiskLevel,
+}
+
+#[derive(AnchorSerialize, AnchorDeserialize)]
 pub struct PoolParams {
     pub ai_agent: Pubkey,
     pub initial_interest_rate_bps: u16,
@@ -670,6 +795,44 @@ pub struct InitPool<'info> {
 
 #[derive(Accounts)]
 pub struct SetSolPrice<'info> {
+    #[account(
+        mut,
+        seeds = [b"lending_pool", pool.authority.as_ref()],
+        bump = pool.bump,
+        has_one = authority,
+    )]
+    pub pool: Account<'info, LendingPool>,
+
+    pub authority: Signer<'info>,
+}
+
+#[derive(Accounts)]
+pub struct UpdateParameters<'info> {
+    #[account(
+        mut,
+        seeds = [b"lending_pool", pool.authority.as_ref()],
+        bump = pool.bump,
+        has_one = ai_agent,
+    )]
+    pub pool: Account<'info, LendingPool>,
+
+    #[account(
+        init,
+        payer = ai_agent,
+        space = 8 + AiDecisionLog::INIT_SPACE,
+        seeds = [b"decision_log", pool.key().as_ref(), pool.total_ai_updates.to_le_bytes().as_ref()],
+        bump
+    )]
+    pub decision_log: Account<'info, AiDecisionLog>,
+
+    #[account(mut)]
+    pub ai_agent: Signer<'info>,
+
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+pub struct EmergencyFreeze<'info> {
     #[account(
         mut,
         seeds = [b"lending_pool", pool.authority.as_ref()],
@@ -1019,6 +1182,29 @@ pub struct RepayEvent {
     pub amount: u64,
     pub remaining_borrow: u64,
     pub remaining_interest: u64,
+    pub timestamp: i64,
+}
+
+#[event]
+pub struct ParametersUpdatedEvent {
+    pub pool: Pubkey,
+    pub ai_agent: Pubkey,
+    pub old_rate: u16,
+    pub new_rate: u16,
+    pub old_collateral: u16,
+    pub new_collateral: u16,
+    pub reasoning_short: String,
+    pub risk_level: RiskLevel,
+    pub confidence: u8,
+    pub mood: ProtocolMood,
+    pub update_number: u64,
+    pub timestamp: i64,
+}
+
+#[event]
+pub struct EmergencyFreezeEvent {
+    pub pool: Pubkey,
+    pub authority: Pubkey,
     pub timestamp: i64,
 }
 
