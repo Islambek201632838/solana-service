@@ -1,0 +1,34 @@
+.anchor
+.DS_Store
+target
+**/*.rs.bk
+node_modules
+test-ledger
+.yarn
+
+# Secrets — NEVER commit
+.env
+.env.local
+.env.production
+.env.*.local
+
+# Keypairs
+keys/
+*.keypair
+*-keypair.json
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# IDE
+.vscode/
+.idea/
+
+# Docker volumes
+pgdata/
+
+# Logs
+*.log

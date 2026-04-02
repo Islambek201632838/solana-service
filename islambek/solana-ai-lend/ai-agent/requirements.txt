@@ -1,0 +1,30 @@
+# Async I/O
+aiohttp>=3.9
+asyncio-mqtt>=0.16
+
+# Solana
+solana>=0.34
+solders>=0.21
+anchorpy>=0.20
+
+# AI
+google-generativeai>=0.8
+
+# Math + ML
+numpy>=1.26
+pandas>=2.2
+scikit-learn>=1.4
+
+# Config
+pydantic-settings>=2.0
+python-dotenv>=1.0
+
+# Logging
+structlog>=24.0
+
+# Database
+aiosqlite>=0.20
+
+# Testing
+pytest>=8.0
+pytest-asyncio>=0.23
