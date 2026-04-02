@@ -1,0 +1,46 @@
+# Чужие контракты — не трогаем, не коммитим
+ai_dispute_resolver/
+ai_dynamic_nft/
+
+
+
+# Ключи
+keys/
+*.json
+!package.json
+!tsconfig.json
+!Anchor.toml
+
+# Node
+node_modules/
+dist/
+.vite/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+
+# Rust / Anchor
+target/
+.anchor/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Env
+.env
+.env.local
+.env.production
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
