@@ -14,8 +14,8 @@ export default function AppLayout({ children, activeTab, onTabChange }: Props) {
 
   return (
     <div className="min-h-screen bg-gray-950 text-gray-100">
-      <Navbar onMenuToggle={() => setDrawerOpen(true)} />
-      <MobileDrawer open={drawerOpen} onClose={() => setDrawerOpen(false)} />
+      <Navbar onMenuToggle={() => setDrawerOpen(true)} activeTab={activeTab} onTabChange={onTabChange} />
+      <MobileDrawer open={drawerOpen} onClose={() => setDrawerOpen(false)} onTabChange={onTabChange} />
 
       <main className="max-w-7xl mx-auto px-4 py-6 pb-24 md:pb-6">
         {children}

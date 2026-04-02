@@ -46,3 +46,4 @@ pgdata/
 
 # Claude Code
 .claude/settings.local.json
+.pytest_cache/

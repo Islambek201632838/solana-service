@@ -1,3 +1,5 @@
+import { useLang } from "../../hooks/useLang";
+
 const moodConfig: Record<string, { color: string; bg: string }> = {
   Thriving: { color: "text-green-400", bg: "bg-green-400/10" },
   Calm: { color: "text-blue-400", bg: "bg-blue-400/10" },
@@ -13,6 +15,7 @@ interface Props {
 
 export default function ProtocolMoodBadge({ mood, frozen }: Props) {
   const cfg = moodConfig[mood] ?? moodConfig.Calm;
+  const { t } = useLang();
 
   return (
     <div className="flex items-center gap-2">
@@ -21,7 +24,7 @@ export default function ProtocolMoodBadge({ mood, frozen }: Props) {
       </span>
       {frozen && (
         <span className="px-3 py-1 rounded-full text-xs font-medium text-red-400 bg-red-400/10">
-          FROZEN
+          {t("frozen")}
         </span>
       )}
     </div>

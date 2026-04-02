@@ -5,6 +5,10 @@ import { PhantomWalletAdapter, SolflareWalletAdapter } from "@solana/wallet-adap
 import { clusterApiUrl } from "@solana/web3.js";
 import "@solana/wallet-adapter-react-ui/styles.css";
 
+import { LangContext } from "./hooks/useLang";
+import { useLang } from "./hooks/useLang";
+import type { Lang } from "./lib/i18n";
+
 import AppLayout from "./components/layout/AppLayout";
 import PoolStats from "./components/dashboard/PoolStats";
 import ProtocolMoodBadge from "./components/dashboard/ProtocolMoodBadge";
@@ -22,6 +26,7 @@ import Analytics from "./pages/Analytics";
 const endpoint = import.meta.env.VITE_SOLANA_RPC || clusterApiUrl("devnet");
 
 function DashboardPage() {
+  const { t } = useLang();
   const { stats, state, loading } = usePool();
   const { data: decisions } = useAiDecisions(1, 5);
   const { connected: wsConnected } = useWebSocket();
@@ -30,8 +35,8 @@ function DashboardPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
-          <h2 className="text-2xl font-bold">Dashboard</h2>
-          <p className="text-sm text-gray-500">AI-powered lending on Solana Devnet</p>
+          <h2 className="text-2xl font-bold">{t("dashboardTitle")}</h2>
+          <p className="text-sm text-gray-500">{t("dashboardSubtitle")}</p>
         </div>
         <div className="flex items-center gap-3">
           <ProtocolMoodBadge mood={state?.current_mood ?? "Calm"} frozen={state?.is_frozen} />
@@ -43,7 +48,7 @@ function DashboardPage() {
       <RateChart />
 
       <div>
-        <h3 className="text-lg font-semibold mb-3">Recent AI Decisions</h3>
+        <h3 className="text-lg font-semibold mb-3">{t("recentAiDecisions")}</h3>
         {decisions?.items?.length ? (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
             {decisions.items.map((d: any) => (
@@ -52,7 +57,7 @@ function DashboardPage() {
           </div>
         ) : (
           <div className="bg-gray-900 rounded-xl border border-gray-800 p-6 text-center text-gray-500">
-            No AI decisions yet — start the AI agent
+            {t("noAiDecisions")}
           </div>
         )}
       </div>
@@ -72,17 +77,28 @@ function ActivePage({ tab }: { tab: string }) {
 
 export default function App() {
   const [activeTab, setActiveTab] = useState("dashboard");
+  const [lang, setLang] = useState<Lang>(() => {
+    const saved = localStorage.getItem("lang");
+    return (saved === "ru" || saved === "en") ? saved : "en";
+  });
   const wallets = useMemo(() => [new PhantomWalletAdapter(), new SolflareWalletAdapter()], []);
 
+  const handleSetLang = (l: Lang) => {
+    setLang(l);
+    localStorage.setItem("lang", l);
+  };
+
   return (
-    <ConnectionProvider endpoint={endpoint}>
-      <WalletProvider wallets={wallets} autoConnect>
-        <WalletModalProvider>
-          <AppLayout activeTab={activeTab} onTabChange={setActiveTab}>
-            <ActivePage tab={activeTab} />
-          </AppLayout>
-        </WalletModalProvider>
-      </WalletProvider>
-    </ConnectionProvider>
+    <LangContext.Provider value={{ lang, setLang: handleSetLang }}>
+      <ConnectionProvider endpoint={endpoint}>
+        <WalletProvider wallets={wallets} autoConnect>
+          <WalletModalProvider>
+            <AppLayout activeTab={activeTab} onTabChange={setActiveTab}>
+              <ActivePage tab={activeTab} />
+            </AppLayout>
+          </WalletModalProvider>
+        </WalletProvider>
+      </ConnectionProvider>
+    </LangContext.Provider>
   );
 }

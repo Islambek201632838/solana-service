@@ -1,3 +1,5 @@
+import { useLang } from "../../hooks/useLang";
+
 interface Props {
   stats: any;
   loading: boolean;
@@ -14,6 +16,8 @@ function StatCard({ label, value, sub }: { label: string; value: string; sub?: s
 }
 
 export default function PoolStats({ stats, loading }: Props) {
+  const { t } = useLang();
+
   if (loading) {
     return (
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
@@ -27,7 +31,7 @@ export default function PoolStats({ stats, loading }: Props) {
   if (!stats) {
     return (
       <div className="bg-gray-900 rounded-xl border border-gray-800 p-6 text-center text-gray-500">
-        Pool not connected — deploy to devnet first
+        {t("poolNotConnected")}
       </div>
     );
   }
@@ -35,24 +39,24 @@ export default function PoolStats({ stats, loading }: Props) {
   return (
     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
       <StatCard
-        label="Total Deposits"
+        label={t("totalDeposits")}
         value={`$${stats.total_deposits_usd?.toLocaleString() ?? "0"}`}
-        sub={`${stats.utilization_pct?.toFixed(1) ?? 0}% utilization`}
+        sub={`${stats.utilization_pct?.toFixed(1) ?? 0}% ${t("utilization")}`}
       />
       <StatCard
-        label="Interest Rate"
+        label={t("interestRate")}
         value={`${stats.interest_rate_pct?.toFixed(2) ?? 0}%`}
-        sub={`Collateral: ${stats.collateral_ratio_pct?.toFixed(0) ?? 0}%`}
+        sub={`${t("collateral")}: ${stats.collateral_ratio_pct?.toFixed(0) ?? 0}%`}
       />
       <StatCard
-        label="Total Borrows"
+        label={t("totalBorrows")}
         value={`$${stats.total_borrows_usd?.toLocaleString() ?? "0"}`}
-        sub={`Liquidity: $${stats.available_liquidity_usd?.toLocaleString() ?? "0"}`}
+        sub={`${t("liquidity")}: $${stats.available_liquidity_usd?.toLocaleString() ?? "0"}`}
       />
       <StatCard
-        label="AI Updates"
+        label={t("aiUpdates")}
         value={String(stats.total_ai_updates ?? 0)}
-        sub={`${stats.total_liquidations ?? 0} liquidations`}
+        sub={`${stats.total_liquidations ?? 0} ${t("liquidations")}`}
       />
     </div>
   );

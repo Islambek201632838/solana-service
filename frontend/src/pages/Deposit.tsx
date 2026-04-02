@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useLang } from "../hooks/useLang";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import { PublicKey, Transaction, SystemProgram } from "@solana/web3.js";
 import { TOKEN_PROGRAM_ID, getAssociatedTokenAddress } from "@solana/spl-token";
@@ -17,6 +18,7 @@ export default function Deposit() {
   const { publicKey, sendTransaction } = useWallet();
   const [loading, setLoading] = useState(false);
   const [txStatus, setTxStatus] = useState<string | null>(null);
+  const { t } = useLang();
 
   const handleDeposit = async (amount: number) => {
     if (!publicKey || !sendTransaction) {
@@ -69,7 +71,7 @@ export default function Deposit() {
 
   return (
     <div className="space-y-6">
-      <h2 className="text-2xl font-bold">Deposit</h2>
+      <h2 className="text-2xl font-bold">{t("depositTitle")}</h2>
 
       {txStatus && (
         <div className={`rounded-lg px-4 py-3 text-sm ${txStatus.startsWith("Error") ? "bg-red-900/30 text-red-400" : "bg-green-900/30 text-green-400"}`}>
@@ -81,18 +83,18 @@ export default function Deposit() {
         <DepositForm onDeposit={handleDeposit} maxBalance={10000} loading={loading} />
 
         <div className="bg-gray-900 rounded-xl border border-gray-800 p-4 space-y-3">
-          <h3 className="text-sm font-medium text-gray-400">Your Position</h3>
+          <h3 className="text-sm font-medium text-gray-400">{t("yourPosition")}</h3>
           <div className="space-y-2">
             <div className="flex justify-between text-sm">
-              <span className="text-gray-500">Deposited</span>
+              <span className="text-gray-500">{t("deposited")}</span>
               <span>${stats?.total_deposits_usd?.toLocaleString() ?? "0"}</span>
             </div>
             <div className="flex justify-between text-sm">
-              <span className="text-gray-500">Interest Rate</span>
+              <span className="text-gray-500">{t("interestRate")}</span>
               <span>{stats?.interest_rate_pct?.toFixed(2) ?? "0"}% APY</span>
             </div>
             <div className="flex justify-between text-sm">
-              <span className="text-gray-500">Pool Utilization</span>
+              <span className="text-gray-500">{t("poolUtilization")}</span>
               <span>{stats?.utilization_pct?.toFixed(1) ?? "0"}%</span>
             </div>
           </div>

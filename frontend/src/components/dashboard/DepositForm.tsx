@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useBreakpoint } from "../../hooks/useMediaQuery";
+import { useLang } from "../../hooks/useLang";
 
 interface Props {
   onDeposit: (amount: number) => Promise<void>;
@@ -12,6 +13,7 @@ const PRESETS = [0.25, 0.5, 0.75, 1.0];
 export default function DepositForm({ onDeposit, maxBalance, loading }: Props) {
   const [amount, setAmount] = useState("");
   const { isMobile } = useBreakpoint();
+  const { t } = useLang();
 
   const handleSubmit = async () => {
     const val = parseFloat(amount);
@@ -22,9 +24,8 @@ export default function DepositForm({ onDeposit, maxBalance, loading }: Props) {
 
   return (
     <div className="bg-gray-900 rounded-xl border border-gray-800 p-4">
-      <h3 className="text-sm font-medium text-gray-400 mb-3">Deposit aiUSDC</h3>
+      <h3 className="text-sm font-medium text-gray-400 mb-3">{t("depositAiusdc")}</h3>
 
-      {/* Preset buttons */}
       <div className="flex gap-2 mb-3">
         {PRESETS.map((pct) => (
           <button
@@ -42,7 +43,7 @@ export default function DepositForm({ onDeposit, maxBalance, loading }: Props) {
           type="number"
           value={amount}
           onChange={(e) => setAmount(e.target.value)}
-          placeholder="Amount (aiUSDC)"
+          placeholder={t("amountPlaceholder")}
           className="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-4 py-3 text-[16px] outline-none focus:border-purple-500"
         />
         <button
@@ -52,12 +53,12 @@ export default function DepositForm({ onDeposit, maxBalance, loading }: Props) {
             isMobile ? "w-full" : ""
           }`}
         >
-          {loading ? "Signing..." : "Deposit"}
+          {loading ? t("signing") : t("depositBtn")}
         </button>
       </div>
 
       <p className="text-xs text-gray-600 mt-2">
-        Balance: {maxBalance.toLocaleString()} aiUSDC
+        {t("balance")}: {maxBalance.toLocaleString()} aiUSDC
       </p>
     </div>
   );

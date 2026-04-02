@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useLang } from "../hooks/useLang";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import { PublicKey, Transaction } from "@solana/web3.js";
 import { TOKEN_PROGRAM_ID, getAssociatedTokenAddress } from "@solana/spl-token";
@@ -15,6 +16,7 @@ export default function Borrow() {
   const { publicKey, sendTransaction } = useWallet();
   const [loading, setLoading] = useState(false);
   const [txStatus, setTxStatus] = useState<string | null>(null);
+  const { t } = useLang();
 
   const handleBorrow = async (amount: number) => {
     if (!publicKey || !sendTransaction) {
@@ -69,7 +71,7 @@ export default function Borrow() {
 
   return (
     <div className="space-y-6">
-      <h2 className="text-2xl font-bold">Borrow</h2>
+      <h2 className="text-2xl font-bold">{t("borrowTitle")}</h2>
 
       {txStatus && (
         <div className={`rounded-lg px-4 py-3 text-sm ${txStatus.startsWith("Error") ? "bg-red-900/30 text-red-400" : "bg-green-900/30 text-green-400"}`}>

@@ -1,8 +1,10 @@
 import { useEffect, useState } from "react";
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
 import { fetchRateHistory } from "../../lib/api";
+import { useLang } from "../../hooks/useLang";
 
 export default function RateChart() {
+  const { t } = useLang();
   const [data, setData] = useState<any[]>([]);
 
   useEffect(() => {
@@ -18,9 +20,9 @@ export default function RateChart() {
   if (data.length === 0) {
     return (
       <div className="bg-gray-900 rounded-xl border border-gray-800 p-6">
-        <h3 className="text-sm font-medium text-gray-400 mb-4">Interest Rate History</h3>
+        <h3 className="text-sm font-medium text-gray-400 mb-4">{t("interestRateHistory")}</h3>
         <div className="h-[200px] sm:h-[250px] lg:h-[350px] flex items-center justify-center text-gray-600">
-          No rate history yet — AI agent needs to run
+          {t("noRateHistory")}
         </div>
       </div>
     );
@@ -28,7 +30,7 @@ export default function RateChart() {
 
   return (
     <div className="bg-gray-900 rounded-xl border border-gray-800 p-4">
-      <h3 className="text-sm font-medium text-gray-400 mb-4">Interest Rate History</h3>
+      <h3 className="text-sm font-medium text-gray-400 mb-4">{t("interestRateHistory")}</h3>
       <div className="h-[200px] sm:h-[250px] lg:h-[350px]">
         <ResponsiveContainer width="100%" height="100%">
           <LineChart data={data}>

@@ -2,11 +2,13 @@ import { useEffect, useState } from "react";
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, AreaChart, Area } from "recharts";
 import { fetchRateHistory, fetchRiskHistory } from "../lib/api";
 import { useBreakpoint } from "../hooks/useMediaQuery";
+import { useLang } from "../hooks/useLang";
 
 export default function Analytics() {
   const [rateData, setRateData] = useState<any[]>([]);
   const [riskData, setRiskData] = useState<any[]>([]);
   const { isMobile } = useBreakpoint();
+  const { t } = useLang();
 
   useEffect(() => {
     fetchRateHistory(50)
@@ -29,12 +31,11 @@ export default function Analytics() {
 
   return (
     <div className="space-y-6">
-      <h2 className="text-2xl font-bold">Analytics</h2>
+      <h2 className="text-2xl font-bold">{t("analyticsTitle")}</h2>
 
       <div className={`grid ${isMobile ? "grid-cols-1" : "grid-cols-2"} gap-6`}>
-        {/* Rate chart */}
         <div className="bg-gray-900 rounded-xl border border-gray-800 p-4">
-          <h3 className="text-sm font-medium text-gray-400 mb-4">Interest Rate</h3>
+          <h3 className="text-sm font-medium text-gray-400 mb-4">{t("interestRate")}</h3>
           {rateData.length ? (
             <div style={{ height: chartHeight }}>
               <ResponsiveContainer width="100%" height="100%">
@@ -49,14 +50,13 @@ export default function Analytics() {
             </div>
           ) : (
             <div className="flex items-center justify-center text-gray-600" style={{ height: chartHeight }}>
-              No rate data yet
+              {t("noRateData")}
             </div>
           )}
         </div>
 
-        {/* Risk chart */}
         <div className="bg-gray-900 rounded-xl border border-gray-800 p-4">
-          <h3 className="text-sm font-medium text-gray-400 mb-4">Risk Score</h3>
+          <h3 className="text-sm font-medium text-gray-400 mb-4">{t("riskScore")}</h3>
           {riskData.length ? (
             <div style={{ height: chartHeight }}>
               <ResponsiveContainer width="100%" height="100%">
@@ -71,7 +71,7 @@ export default function Analytics() {
             </div>
           ) : (
             <div className="flex items-center justify-center text-gray-600" style={{ height: chartHeight }}>
-              No risk data yet
+              {t("noRiskData")}
             </div>
           )}
         </div>

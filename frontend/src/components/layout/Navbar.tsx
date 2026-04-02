@@ -1,12 +1,25 @@
 import { WalletMultiButton } from "@solana/wallet-adapter-react-ui";
 import { useBreakpoint } from "../../hooks/useMediaQuery";
+import { useLang } from "../../hooks/useLang";
+import type { TranslationKey } from "../../lib/i18n";
 
 interface Props {
   onMenuToggle: () => void;
+  activeTab: string;
+  onTabChange: (tab: string) => void;
 }
 
-export default function Navbar({ onMenuToggle }: Props) {
+const tabs: { id: string; labelKey: TranslationKey }[] = [
+  { id: "dashboard", labelKey: "dashboard" },
+  { id: "deposit", labelKey: "deposit" },
+  { id: "borrow", labelKey: "borrow" },
+  { id: "decisions", labelKey: "aiDecisions" },
+  { id: "analytics", labelKey: "analytics" },
+];
+
+export default function Navbar({ onMenuToggle, activeTab, onTabChange }: Props) {
   const { isMobile } = useBreakpoint();
+  const { lang, setLang, t } = useLang();
 
   return (
     <nav className="sticky top-0 z-50 bg-gray-900/80 backdrop-blur border-b border-gray-800 px-4 py-3">
@@ -19,20 +32,41 @@ export default function Navbar({ onMenuToggle }: Props) {
               </svg>
             </button>
           )}
-          <h1 className="text-lg font-bold bg-gradient-to-r from-purple-400 to-cyan-400 bg-clip-text text-transparent">
+          <h1
+            className="text-lg font-bold bg-gradient-to-r from-purple-400 to-cyan-400 bg-clip-text text-transparent cursor-pointer"
+            onClick={() => onTabChange("dashboard")}
+          >
             SolanaAI Lend
           </h1>
         </div>
 
         {!isMobile && (
-          <div className="flex gap-6 text-sm text-gray-400">
-            <a href="#dashboard" className="hover:text-white">Dashboard</a>
-            <a href="#decisions" className="hover:text-white">AI Decisions</a>
-            <a href="#analytics" className="hover:text-white">Analytics</a>
+          <div className="flex gap-1 text-sm">
+            {tabs.map((tab) => (
+              <button
+                key={tab.id}
+                onClick={() => onTabChange(tab.id)}
+                className={`px-3 py-1.5 rounded-lg transition ${
+                  activeTab === tab.id
+                    ? "bg-purple-600/20 text-purple-400"
+                    : "text-gray-400 hover:text-white hover:bg-gray-800"
+                }`}
+              >
+                {t(tab.labelKey)}
+              </button>
+            ))}
           </div>
         )}
 
-        <WalletMultiButton className="!bg-purple-600 !rounded-lg !h-10 !text-sm" />
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setLang(lang === "en" ? "ru" : "en")}
+            className="px-2 py-1 text-xs rounded bg-gray-800 hover:bg-gray-700 text-gray-400"
+          >
+            {lang === "en" ? "EN" : "RU"}
+          </button>
+          <WalletMultiButton className="!bg-purple-600 !rounded-lg !h-10 !text-sm" />
+        </div>
       </div>
     </nav>
   );
