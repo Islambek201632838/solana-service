@@ -1,3 +1,7 @@
+# Чужие контракты
+ai_dispute_resolver/
+ai_dynamic_nft/
+
 # Secrets — NEVER commit
 .env
 .env.local

@@ -1,6 +1,4 @@
-FROM node:20-alpine AS build
-
-RUN apk add --no-cache python3 make g++ linux-headers eudev-dev
+FROM node:20-slim AS build
 
 WORKDIR /app
 
@@ -9,11 +7,16 @@ ARG VITE_WS_URL
 ARG VITE_SOLANA_RPC
 ARG VITE_PROGRAM_ID
 
+ENV VITE_API_URL=$VITE_API_URL
+ENV VITE_WS_URL=$VITE_WS_URL
+ENV VITE_SOLANA_RPC=$VITE_SOLANA_RPC
+ENV VITE_PROGRAM_ID=$VITE_PROGRAM_ID
+
 COPY package.json package-lock.json ./
-RUN npm ci --ignore-scripts && npm rebuild
+RUN npm ci
 
 COPY . .
-RUN npm run build
+RUN npx tsc -b && npx vite build
 
 FROM nginx:alpine
 COPY --from=build /app/dist /usr/share/nginx/html
