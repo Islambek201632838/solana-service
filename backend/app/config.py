@@ -9,6 +9,7 @@ class Settings(BaseSettings):
     solana_rpc_url: str = "https://api.devnet.solana.com"
     program_id: str = ""
     pool_authority: str = ""
+    pool_address: str = ""
 
     # Database
     database_url: str = "sqlite+aiosqlite:///decisions.db"

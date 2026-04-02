@@ -12,7 +12,7 @@ from app.config import Settings
 class SolanaReader:
     def __init__(self, settings: Settings):
         self.rpc_url = settings.solana_rpc_url
-        self.pool_authority = settings.pool_authority
+        self.pool_address = settings.pool_address or settings.pool_authority
         self._cache: dict | None = None
         self._cache_time: float = 0
         self._cache_ttl: float = 30.0
@@ -40,14 +40,14 @@ class SolanaReader:
             await self._session.close()
 
     async def _fetch_pool(self) -> dict:
-        if not self.pool_authority:
+        if not self.pool_address:
             return {"error": "No pool_authority configured"}
 
         payload = {
             "jsonrpc": "2.0",
             "id": 1,
             "method": "getAccountInfo",
-            "params": [self.pool_authority, {"encoding": "base64"}],
+            "params": [self.pool_address, {"encoding": "base64"}],
         }
         try:
             session = await self._get_session()

@@ -68,9 +68,15 @@ cd solana-service/islambek/solana-ai-lend
 
 # 2. Настроить .env
 cp .env.example .env
-# Заполнить GEMINI_API_KEY, POOL_AUTHORITY, JWT_SECRET
+# Заполнить GEMINI_API_KEY, JWT_SECRET
 
-# 3. Запустить всё
+# 3. Деплой контракта и инициализация пула
+anchor build
+anchor deploy --provider.cluster devnet
+ANCHOR_PROVIDER_URL=https://api.devnet.solana.com ANCHOR_WALLET=./keys/deployer.json npx tsx scripts/init-devnet.ts
+# Скрипт выведет POOL_ADDRESS — добавить в .env
+
+# 4. Запустить все сервисы
 cd docker
 docker compose up --build
 

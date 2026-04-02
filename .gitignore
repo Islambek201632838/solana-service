@@ -1,31 +1,14 @@
-# Чужие контракты — не трогаем, не коммитим
-ai_dispute_resolver/
-ai_dynamic_nft/
-
-# ===============================
-# СЕКРЕТЫ — НИКОГДА не коммитить
-# ===============================
+# Secrets — NEVER commit
 .env
 .env.local
 .env.production
 .env.*.local
 docker/.env
 
-# Keypairs / ключи
+# Keypairs
 keys/
 *.keypair
 *-keypair.json
-deployer.json
-ai-agent.json
-
-# SSL сертификаты
-*.pem
-*.key
-*.crt
-
-# ===============================
-# Build artifacts
-# ===============================
 
 # Node
 node_modules/
@@ -37,27 +20,29 @@ __pycache__/
 *.pyc
 .venv/
 venv/
-*.egg-info/
 
 # Rust / Anchor
 target/
 .anchor/
+test-ledger/
 
 # Docker volumes
 pgdata/
 
-# ===============================
+# SQLite
+*.db
+
 # IDE / OS
-# ===============================
 .vscode/
 .idea/
 *.swp
-*.swo
 .DS_Store
-Thumbs.db
 
 # Logs
 *.log
+
+# Yarn
+.yarn
 
 # Claude Code
 .claude/settings.local.json

@@ -33,17 +33,17 @@ def test_health(client):
 
 
 # ==========================================
-# Pool (503 expected — no pool deployed)
+# Pool (200 if deployed, 503 if not)
 # ==========================================
 
-def test_pool_state_no_pool(client):
+def test_pool_state(client):
     r = client.get("/api/pool/state")
-    assert r.status_code == 503
+    assert r.status_code in (200, 503)
 
 
-def test_pool_stats_no_pool(client):
+def test_pool_stats(client):
     r = client.get("/api/pool/stats")
-    assert r.status_code == 503
+    assert r.status_code in (200, 503)
 
 
 # ==========================================
