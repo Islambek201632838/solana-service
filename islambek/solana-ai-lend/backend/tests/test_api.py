@@ -1,4 +1,10 @@
-"""Backend API tests — all REST endpoints + WebSocket."""
+"""Backend API tests — all REST endpoints + WebSocket.
+
+Note: aiohttp may print 'Unclosed client session' to stderr when tests end.
+This is cosmetic — in production, lifespan shutdown calls reader.close().
+TestClient doesn't fully run async lifespan teardown, so the session leaks
+only in the test runner process (no real resource leak).
+"""
 
 import pytest
 from fastapi.testclient import TestClient
@@ -8,7 +14,8 @@ from app.main import app
 
 @pytest.fixture
 def client():
-    return TestClient(app)
+    with TestClient(app) as c:
+        yield c
 
 
 # ==========================================
