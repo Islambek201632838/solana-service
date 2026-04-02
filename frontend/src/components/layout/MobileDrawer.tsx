@@ -1,18 +1,23 @@
+import { useLang } from "../../hooks/useLang";
+import type { TranslationKey } from "../../lib/i18n";
+
 interface Props {
   open: boolean;
   onClose: () => void;
   onTabChange?: (tab: string) => void;
 }
 
-const tabs = [
-  { id: "dashboard", label: "Dashboard" },
-  { id: "deposit", label: "Deposit" },
-  { id: "borrow", label: "Borrow" },
-  { id: "decisions", label: "AI Decisions" },
-  { id: "analytics", label: "Analytics" },
+const tabs: { id: string; labelKey: TranslationKey }[] = [
+  { id: "dashboard", labelKey: "dashboard" },
+  { id: "deposit", labelKey: "deposit" },
+  { id: "borrow", labelKey: "borrow" },
+  { id: "decisions", labelKey: "aiDecisions" },
+  { id: "analytics", labelKey: "analytics" },
 ];
 
 export default function MobileDrawer({ open, onClose, onTabChange }: Props) {
+  const { t } = useLang();
+
   if (!open) return null;
 
   const handleClick = (id: string) => {
@@ -32,12 +37,12 @@ export default function MobileDrawer({ open, onClose, onTabChange }: Props) {
               onClick={() => handleClick(tab.id)}
               className="text-left text-gray-300 hover:text-white py-2 px-3 rounded-lg hover:bg-gray-800"
             >
-              {tab.label}
+              {t(tab.labelKey)}
             </button>
           ))}
         </nav>
         <div className="mt-8 pt-4 border-t border-gray-800 text-xs text-gray-600">
-          Devnet Only
+          {t("devnetOnly")}
         </div>
       </div>
     </>
