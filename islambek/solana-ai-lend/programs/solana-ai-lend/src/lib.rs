@@ -1,18 +1,13 @@
 use anchor_lang::prelude::*;
+use anchor_lang::system_program;
 use anchor_spl::token::{self, Mint, Token, TokenAccount, Transfer};
 
 declare_id!("HfTwgCwDTHpfrCKkgrruiuHaMKj79AVjyQSTwyoH9NVy");
-
-// ============================================================
-// PROGRAM
-// ============================================================
 
 #[program]
 pub mod solana_ai_lend {
     use super::*;
 
-    /// Initialize the lending pool (one-time setup).
-    /// PDA: seeds = ["lending_pool", authority]
     pub fn initialize_pool(ctx: Context<InitPool>, params: PoolParams) -> Result<()> {
         require!(params.min_interest_rate_bps <= params.max_interest_rate_bps, LendError::RateTooLow);
         require!(params.initial_interest_rate_bps >= params.min_interest_rate_bps, LendError::RateTooLow);
@@ -45,6 +40,8 @@ pub mod solana_ai_lend {
         pool.min_collateral_ratio_bps = params.min_collateral_ratio_bps;
         pool.max_collateral_ratio_bps = params.max_collateral_ratio_bps;
 
+        pool.sol_price_usd = 0;
+
         pool.total_deposits_count = 0;
         pool.total_borrows_count = 0;
         pool.total_ai_updates = 0;
@@ -72,7 +69,13 @@ pub mod solana_ai_lend {
         Ok(())
     }
 
-    /// Deposit aiUSDC into the pool.
+    /// Set SOL/USD price (authority only). In production, use Pyth oracle.
+    pub fn set_sol_price(ctx: Context<SetSolPrice>, price_usd: u64) -> Result<()> {
+        require!(price_usd > 0, LendError::InvalidPrice);
+        ctx.accounts.pool.sol_price_usd = price_usd;
+        Ok(())
+    }
+
     pub fn deposit(ctx: Context<Deposit>, amount: u64) -> Result<()> {
         require!(amount > 0, LendError::ZeroAmount);
 
@@ -80,7 +83,6 @@ pub mod solana_ai_lend {
         let position = &mut ctx.accounts.user_position;
         let now = Clock::get()?.unix_timestamp;
 
-        // Transfer tokens: user → vault
         token::transfer(
             CpiContext::new(
                 ctx.accounts.token_program.to_account_info(),
@@ -93,14 +95,11 @@ pub mod solana_ai_lend {
             amount,
         )?;
 
-        // Update pool
         pool.total_deposits = pool.total_deposits.checked_add(amount).ok_or(LendError::MathOverflow)?;
         pool.available_liquidity = pool.available_liquidity.checked_add(amount).ok_or(LendError::MathOverflow)?;
         pool.total_deposits_count = pool.total_deposits_count.checked_add(1).ok_or(LendError::MathOverflow)?;
 
-        // Update user position
-        if position.deposited == 0 && position.borrowed == 0 {
-            // First interaction — initialize position fields
+        if position.owner == Pubkey::default() {
             position.owner = ctx.accounts.owner.key();
             position.pool = pool.key();
             position.first_deposit_at = now;
@@ -123,7 +122,6 @@ pub mod solana_ai_lend {
         Ok(())
     }
 
-    /// Withdraw aiUSDC from the pool.
     pub fn withdraw(ctx: Context<Withdraw>, amount: u64) -> Result<()> {
         require!(amount > 0, LendError::ZeroAmount);
 
@@ -133,7 +131,6 @@ pub mod solana_ai_lend {
         let pool = &ctx.accounts.pool;
         require!(amount <= pool.available_liquidity, LendError::InsufficientLiquidity);
 
-        // Transfer tokens: vault → user (PDA signer)
         let authority_key = pool.authority.key();
         let seeds = &[
             b"lending_pool".as_ref(),
@@ -155,13 +152,11 @@ pub mod solana_ai_lend {
             amount,
         )?;
 
-        // Update pool
         let pool = &mut ctx.accounts.pool;
         let now = Clock::get()?.unix_timestamp;
         pool.total_deposits = pool.total_deposits.checked_sub(amount).ok_or(LendError::MathOverflow)?;
         pool.available_liquidity = pool.available_liquidity.checked_sub(amount).ok_or(LendError::MathOverflow)?;
 
-        // Update user position
         let position = &mut ctx.accounts.user_position;
         position.deposited = position.deposited.checked_sub(amount).ok_or(LendError::MathOverflow)?;
         position.total_operations = position.total_operations.checked_add(1).ok_or(LendError::MathOverflow)?;
@@ -172,6 +167,338 @@ pub mod solana_ai_lend {
             amount,
             remaining_deposit: position.deposited,
             pool_available_liquidity: pool.available_liquidity,
+            timestamp: now,
+        });
+
+        Ok(())
+    }
+
+    /// Deposit SOL as collateral.
+    pub fn deposit_collateral(ctx: Context<DepositCollateral>, amount: u64) -> Result<()> {
+        require!(amount > 0, LendError::ZeroAmount);
+
+        // Transfer SOL: user → pool PDA
+        system_program::transfer(
+            CpiContext::new(
+                ctx.accounts.system_program.to_account_info(),
+                system_program::Transfer {
+                    from: ctx.accounts.owner.to_account_info(),
+                    to: ctx.accounts.pool.to_account_info(),
+                },
+            ),
+            amount,
+        )?;
+
+        let pool = &mut ctx.accounts.pool;
+        let position = &mut ctx.accounts.user_position;
+        let now = Clock::get()?.unix_timestamp;
+
+        if position.owner == Pubkey::default() {
+            position.owner = ctx.accounts.owner.key();
+            position.pool = pool.key();
+            position.first_deposit_at = now;
+            position.loyalty_tier = LoyaltyTier::Bronze;
+            position.bump = ctx.bumps.user_position;
+        }
+
+        pool.total_collateral_sol = pool.total_collateral_sol.checked_add(amount).ok_or(LendError::MathOverflow)?;
+        position.collateral_sol = position.collateral_sol.checked_add(amount).ok_or(LendError::MathOverflow)?;
+        position.total_operations = position.total_operations.checked_add(1).ok_or(LendError::MathOverflow)?;
+
+        emit!(CollateralDepositedEvent {
+            pool: pool.key(),
+            user: ctx.accounts.owner.key(),
+            amount,
+            total_collateral: position.collateral_sol,
+            timestamp: now,
+        });
+
+        Ok(())
+    }
+
+    /// Withdraw SOL collateral (only if no active borrow).
+    pub fn withdraw_collateral(ctx: Context<WithdrawCollateral>, amount: u64) -> Result<()> {
+        require!(amount > 0, LendError::ZeroAmount);
+
+        let position = &ctx.accounts.user_position;
+        require!(position.borrowed == 0 && position.accrued_interest == 0, LendError::HasActiveBorrow);
+        require!(amount <= position.collateral_sol, LendError::InsufficientCollateral);
+
+        // Ensure pool keeps rent exemption
+        let pool_info = ctx.accounts.pool.to_account_info();
+        let rent = Rent::get()?;
+        let min_lamports = rent.minimum_balance(pool_info.data_len());
+        let pool_lamports = pool_info.lamports();
+        require!(
+            pool_lamports.checked_sub(amount).ok_or(LendError::MathOverflow)? >= min_lamports,
+            LendError::InsufficientLiquidity
+        );
+
+        // Transfer SOL: pool PDA → user (direct lamport manipulation, our program owns pool)
+        let new_pool = pool_lamports.checked_sub(amount).ok_or(LendError::MathOverflow)?;
+        **pool_info.try_borrow_mut_lamports()? = new_pool;
+
+        let owner_info = ctx.accounts.owner.to_account_info();
+        let new_owner = owner_info.lamports().checked_add(amount).ok_or(LendError::MathOverflow)?;
+        **owner_info.try_borrow_mut_lamports()? = new_owner;
+
+        let pool = &mut ctx.accounts.pool;
+        let now = Clock::get()?.unix_timestamp;
+        pool.total_collateral_sol = pool.total_collateral_sol.checked_sub(amount).ok_or(LendError::MathOverflow)?;
+
+        let position = &mut ctx.accounts.user_position;
+        position.collateral_sol = position.collateral_sol.checked_sub(amount).ok_or(LendError::MathOverflow)?;
+        position.total_operations = position.total_operations.checked_add(1).ok_or(LendError::MathOverflow)?;
+
+        emit!(CollateralWithdrawnEvent {
+            pool: pool.key(),
+            user: ctx.accounts.owner.key(),
+            amount,
+            remaining_collateral: position.collateral_sol,
+            timestamp: now,
+        });
+
+        Ok(())
+    }
+
+    /// Borrow aiUSDC against SOL collateral.
+    pub fn borrow(ctx: Context<Borrow>, amount: u64) -> Result<()> {
+        require!(amount > 0, LendError::ZeroAmount);
+
+        let pool = &ctx.accounts.pool;
+        let position = &ctx.accounts.user_position;
+
+        require!(pool.sol_price_usd > 0, LendError::InvalidPrice);
+
+        let new_borrowed = position.borrowed.checked_add(amount).ok_or(LendError::MathOverflow)?;
+        require!(new_borrowed <= pool.max_borrow_limit, LendError::BorrowLimitExceeded);
+        require!(amount <= pool.available_liquidity, LendError::InsufficientLiquidity);
+
+        // Collateral check (u128 to prevent overflow):
+        // collateral_value_usd = collateral_sol * sol_price / 1e9
+        // Required: collateral_value >= new_borrowed * collateral_ratio / 10000
+        let collateral_value = (position.collateral_sol as u128)
+            .checked_mul(pool.sol_price_usd as u128).ok_or(LendError::MathOverflow)?
+            .checked_div(1_000_000_000).ok_or(LendError::MathOverflow)?;
+
+        let required = (new_borrowed as u128)
+            .checked_mul(pool.collateral_ratio_bps as u128).ok_or(LendError::MathOverflow)?
+            .checked_div(10000).ok_or(LendError::MathOverflow)?;
+
+        require!(collateral_value >= required, LendError::InsufficientCollateral);
+
+        // Transfer aiUSDC: vault → user (PDA signer)
+        let authority_key = pool.authority.key();
+        let seeds = &[
+            b"lending_pool".as_ref(),
+            authority_key.as_ref(),
+            &[pool.bump],
+        ];
+        let signer_seeds = &[&seeds[..]];
+
+        token::transfer(
+            CpiContext::new_with_signer(
+                ctx.accounts.token_program.to_account_info(),
+                Transfer {
+                    from: ctx.accounts.pool_vault.to_account_info(),
+                    to: ctx.accounts.user_token_account.to_account_info(),
+                    authority: ctx.accounts.pool.to_account_info(),
+                },
+                signer_seeds,
+            ),
+            amount,
+        )?;
+
+        let pool = &mut ctx.accounts.pool;
+        let now = Clock::get()?.unix_timestamp;
+        pool.total_borrows = pool.total_borrows.checked_add(amount).ok_or(LendError::MathOverflow)?;
+        pool.available_liquidity = pool.available_liquidity.checked_sub(amount).ok_or(LendError::MathOverflow)?;
+        pool.total_borrows_count = pool.total_borrows_count.checked_add(1).ok_or(LendError::MathOverflow)?;
+
+        let position = &mut ctx.accounts.user_position;
+        position.borrowed = new_borrowed;
+        position.borrow_timestamp = now;
+        position.last_interest_update = now;
+        position.total_operations = position.total_operations.checked_add(1).ok_or(LendError::MathOverflow)?;
+
+        emit!(BorrowEvent {
+            pool: pool.key(),
+            user: ctx.accounts.owner.key(),
+            amount,
+            total_borrowed: position.borrowed,
+            collateral_sol: position.collateral_sol,
+            timestamp: now,
+        });
+
+        Ok(())
+    }
+
+    /// Repay borrowed aiUSDC. Interest is paid first, then principal.
+    pub fn repay(ctx: Context<Repay>, amount: u64) -> Result<()> {
+        require!(amount > 0, LendError::ZeroAmount);
+
+        let position = &ctx.accounts.user_position;
+        let total_owed = position.borrowed
+            .checked_add(position.accrued_interest).ok_or(LendError::MathOverflow)?;
+        require!(amount <= total_owed, LendError::RepayExceedsBorrow);
+
+        // Transfer aiUSDC: user → vault
+        token::transfer(
+            CpiContext::new(
+                ctx.accounts.token_program.to_account_info(),
+                Transfer {
+                    from: ctx.accounts.user_token_account.to_account_info(),
+                    to: ctx.accounts.pool_vault.to_account_info(),
+                    authority: ctx.accounts.owner.to_account_info(),
+                },
+            ),
+            amount,
+        )?;
+
+        let pool = &mut ctx.accounts.pool;
+        let position = &mut ctx.accounts.user_position;
+        let now = Clock::get()?.unix_timestamp;
+
+        // Pay interest first, then principal
+        let mut remaining = amount;
+        if remaining >= position.accrued_interest {
+            remaining = remaining.checked_sub(position.accrued_interest).ok_or(LendError::MathOverflow)?;
+            position.accrued_interest = 0;
+        } else {
+            position.accrued_interest = position.accrued_interest
+                .checked_sub(remaining).ok_or(LendError::MathOverflow)?;
+            remaining = 0;
+        }
+
+        if remaining > 0 {
+            position.borrowed = position.borrowed.checked_sub(remaining).ok_or(LendError::MathOverflow)?;
+            pool.total_borrows = pool.total_borrows.checked_sub(remaining).ok_or(LendError::MathOverflow)?;
+        }
+
+        pool.available_liquidity = pool.available_liquidity.checked_add(amount).ok_or(LendError::MathOverflow)?;
+        position.total_operations = position.total_operations.checked_add(1).ok_or(LendError::MathOverflow)?;
+
+        if position.borrowed == 0 && position.accrued_interest == 0 {
+            position.borrow_timestamp = 0;
+        }
+
+        emit!(RepayEvent {
+            pool: pool.key(),
+            user: ctx.accounts.owner.key(),
+            amount,
+            remaining_borrow: position.borrowed,
+            remaining_interest: position.accrued_interest,
+            timestamp: now,
+        });
+
+        Ok(())
+    }
+
+    /// Accrue interest on a borrow position. Anyone can call this.
+    pub fn accrue_interest(ctx: Context<AccrueInterest>) -> Result<()> {
+        let pool = &ctx.accounts.pool;
+        let position = &mut ctx.accounts.user_position;
+
+        require!(position.borrowed > 0, LendError::NothingToLiquidate);
+
+        let now = Clock::get()?.unix_timestamp;
+        let elapsed = (now.checked_sub(position.last_interest_update)
+            .ok_or(LendError::MathOverflow)?) as u64;
+
+        if elapsed == 0 {
+            return Ok(());
+        }
+
+        // interest = borrowed * rate_bps * elapsed_sec / (SECONDS_PER_YEAR * 10000)
+        let interest = (position.borrowed as u128)
+            .checked_mul(pool.interest_rate_bps as u128).ok_or(LendError::MathOverflow)?
+            .checked_mul(elapsed as u128).ok_or(LendError::MathOverflow)?
+            .checked_div(31_557_600u128.checked_mul(10000).ok_or(LendError::MathOverflow)?)
+            .ok_or(LendError::MathOverflow)? as u64;
+
+        position.accrued_interest = position.accrued_interest
+            .checked_add(interest).ok_or(LendError::MathOverflow)?;
+        position.last_interest_update = now;
+
+        Ok(())
+    }
+
+    /// Liquidate an undercollateralized position.
+    /// Liquidator repays the debt and receives all borrower's collateral.
+    pub fn liquidate(ctx: Context<Liquidate>) -> Result<()> {
+        let pool = &ctx.accounts.pool;
+        let position = &ctx.accounts.borrower_position;
+
+        require!(pool.sol_price_usd > 0, LendError::InvalidPrice);
+        require!(position.borrowed > 0, LendError::NothingToLiquidate);
+
+        // Check undercollateralized:
+        // collateral_value < total_owed * liquidation_threshold / 10000
+        let collateral_value = (position.collateral_sol as u128)
+            .checked_mul(pool.sol_price_usd as u128).ok_or(LendError::MathOverflow)?
+            .checked_div(1_000_000_000).ok_or(LendError::MathOverflow)?;
+
+        let total_owed = position.borrowed
+            .checked_add(position.accrued_interest).ok_or(LendError::MathOverflow)?;
+
+        let threshold = (total_owed as u128)
+            .checked_mul(pool.liquidation_threshold_bps as u128).ok_or(LendError::MathOverflow)?
+            .checked_div(10000).ok_or(LendError::MathOverflow)?;
+
+        require!(collateral_value < threshold, LendError::PositionHealthy);
+
+        // Liquidator pays the full debt in aiUSDC
+        token::transfer(
+            CpiContext::new(
+                ctx.accounts.token_program.to_account_info(),
+                Transfer {
+                    from: ctx.accounts.liquidator_token_account.to_account_info(),
+                    to: ctx.accounts.pool_vault.to_account_info(),
+                    authority: ctx.accounts.liquidator.to_account_info(),
+                },
+            ),
+            total_owed,
+        )?;
+
+        // Liquidator receives all borrower's collateral SOL
+        let collateral_sol = position.collateral_sol;
+        let pool_info = ctx.accounts.pool.to_account_info();
+        let rent = Rent::get()?;
+        let min_lamports = rent.minimum_balance(pool_info.data_len());
+        let available_sol = pool_info.lamports().checked_sub(min_lamports).ok_or(LendError::MathOverflow)?;
+        let sol_to_liquidator = collateral_sol.min(available_sol);
+
+        let new_pool_lamports = pool_info.lamports()
+            .checked_sub(sol_to_liquidator).ok_or(LendError::MathOverflow)?;
+        **pool_info.try_borrow_mut_lamports()? = new_pool_lamports;
+
+        let liquidator_info = ctx.accounts.liquidator.to_account_info();
+        let new_liq_lamports = liquidator_info.lamports()
+            .checked_add(sol_to_liquidator).ok_or(LendError::MathOverflow)?;
+        **liquidator_info.try_borrow_mut_lamports()? = new_liq_lamports;
+
+        // Update pool state
+        let pool = &mut ctx.accounts.pool;
+        let now = Clock::get()?.unix_timestamp;
+        pool.total_borrows = pool.total_borrows.checked_sub(position.borrowed).ok_or(LendError::MathOverflow)?;
+        pool.available_liquidity = pool.available_liquidity.checked_add(total_owed).ok_or(LendError::MathOverflow)?;
+        pool.total_collateral_sol = pool.total_collateral_sol.checked_sub(collateral_sol).ok_or(LendError::MathOverflow)?;
+        pool.total_liquidations = pool.total_liquidations.checked_add(1).ok_or(LendError::MathOverflow)?;
+
+        // Clear borrower position
+        let position = &mut ctx.accounts.borrower_position;
+        let borrower_key = position.owner;
+        position.borrowed = 0;
+        position.collateral_sol = 0;
+        position.accrued_interest = 0;
+        position.borrow_timestamp = 0;
+
+        emit!(LiquidationEvent {
+            pool: pool.key(),
+            liquidator: ctx.accounts.liquidator.key(),
+            borrower: borrower_key,
+            repaid_amount: total_owed,
+            collateral_seized: sol_to_liquidator,
             timestamp: now,
         });
 
@@ -221,6 +548,9 @@ pub struct LendingPool {
     pub min_interest_rate_bps: u16,
     pub min_collateral_ratio_bps: u16,
     pub max_collateral_ratio_bps: u16,
+
+    /// SOL/USD price with 6 decimals (e.g. 185_500_000 = $185.50)
+    pub sol_price_usd: u64,
 
     pub total_deposits_count: u64,
     pub total_borrows_count: u64,
@@ -339,6 +669,19 @@ pub struct InitPool<'info> {
 }
 
 #[derive(Accounts)]
+pub struct SetSolPrice<'info> {
+    #[account(
+        mut,
+        seeds = [b"lending_pool", pool.authority.as_ref()],
+        bump = pool.bump,
+        has_one = authority,
+    )]
+    pub pool: Account<'info, LendingPool>,
+
+    pub authority: Signer<'info>,
+}
+
+#[derive(Accounts)]
 pub struct Deposit<'info> {
     #[account(
         mut,
@@ -421,6 +764,191 @@ pub struct Withdraw<'info> {
     pub token_program: Program<'info, Token>,
 }
 
+#[derive(Accounts)]
+pub struct DepositCollateral<'info> {
+    #[account(
+        mut,
+        seeds = [b"lending_pool", pool.authority.as_ref()],
+        bump = pool.bump,
+    )]
+    pub pool: Account<'info, LendingPool>,
+
+    #[account(
+        init_if_needed,
+        payer = owner,
+        space = 8 + UserPosition::INIT_SPACE,
+        seeds = [b"position", pool.key().as_ref(), owner.key().as_ref()],
+        bump
+    )]
+    pub user_position: Account<'info, UserPosition>,
+
+    #[account(mut)]
+    pub owner: Signer<'info>,
+
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+pub struct WithdrawCollateral<'info> {
+    #[account(
+        mut,
+        seeds = [b"lending_pool", pool.authority.as_ref()],
+        bump = pool.bump,
+    )]
+    pub pool: Account<'info, LendingPool>,
+
+    #[account(
+        mut,
+        seeds = [b"position", pool.key().as_ref(), owner.key().as_ref()],
+        bump = user_position.bump,
+        has_one = owner,
+        has_one = pool,
+    )]
+    pub user_position: Account<'info, UserPosition>,
+
+    #[account(mut)]
+    pub owner: Signer<'info>,
+}
+
+#[derive(Accounts)]
+pub struct Borrow<'info> {
+    #[account(
+        mut,
+        seeds = [b"lending_pool", pool.authority.as_ref()],
+        bump = pool.bump,
+        has_one = token_mint,
+    )]
+    pub pool: Account<'info, LendingPool>,
+
+    #[account(
+        mut,
+        seeds = [b"vault", pool.key().as_ref()],
+        bump = pool.vault_bump,
+    )]
+    pub pool_vault: Account<'info, TokenAccount>,
+
+    pub token_mint: Account<'info, Mint>,
+
+    #[account(
+        mut,
+        seeds = [b"position", pool.key().as_ref(), owner.key().as_ref()],
+        bump = user_position.bump,
+        has_one = owner,
+        has_one = pool,
+    )]
+    pub user_position: Account<'info, UserPosition>,
+
+    #[account(
+        mut,
+        constraint = user_token_account.owner == owner.key(),
+        constraint = user_token_account.mint == token_mint.key(),
+    )]
+    pub user_token_account: Account<'info, TokenAccount>,
+
+    #[account(mut)]
+    pub owner: Signer<'info>,
+
+    pub token_program: Program<'info, Token>,
+}
+
+#[derive(Accounts)]
+pub struct Repay<'info> {
+    #[account(
+        mut,
+        seeds = [b"lending_pool", pool.authority.as_ref()],
+        bump = pool.bump,
+        has_one = token_mint,
+    )]
+    pub pool: Account<'info, LendingPool>,
+
+    #[account(
+        mut,
+        seeds = [b"vault", pool.key().as_ref()],
+        bump = pool.vault_bump,
+    )]
+    pub pool_vault: Account<'info, TokenAccount>,
+
+    pub token_mint: Account<'info, Mint>,
+
+    #[account(
+        mut,
+        seeds = [b"position", pool.key().as_ref(), owner.key().as_ref()],
+        bump = user_position.bump,
+        has_one = owner,
+        has_one = pool,
+    )]
+    pub user_position: Account<'info, UserPosition>,
+
+    #[account(
+        mut,
+        constraint = user_token_account.owner == owner.key(),
+        constraint = user_token_account.mint == token_mint.key(),
+    )]
+    pub user_token_account: Account<'info, TokenAccount>,
+
+    #[account(mut)]
+    pub owner: Signer<'info>,
+
+    pub token_program: Program<'info, Token>,
+}
+
+#[derive(Accounts)]
+pub struct AccrueInterest<'info> {
+    #[account(
+        seeds = [b"lending_pool", pool.authority.as_ref()],
+        bump = pool.bump,
+    )]
+    pub pool: Account<'info, LendingPool>,
+
+    #[account(
+        mut,
+        seeds = [b"position", pool.key().as_ref(), user_position.owner.as_ref()],
+        bump = user_position.bump,
+        has_one = pool,
+    )]
+    pub user_position: Account<'info, UserPosition>,
+}
+
+#[derive(Accounts)]
+pub struct Liquidate<'info> {
+    #[account(
+        mut,
+        seeds = [b"lending_pool", pool.authority.as_ref()],
+        bump = pool.bump,
+        has_one = token_mint,
+    )]
+    pub pool: Account<'info, LendingPool>,
+
+    #[account(
+        mut,
+        seeds = [b"vault", pool.key().as_ref()],
+        bump = pool.vault_bump,
+    )]
+    pub pool_vault: Account<'info, TokenAccount>,
+
+    pub token_mint: Account<'info, Mint>,
+
+    #[account(
+        mut,
+        seeds = [b"position", pool.key().as_ref(), borrower_position.owner.as_ref()],
+        bump = borrower_position.bump,
+        has_one = pool,
+    )]
+    pub borrower_position: Account<'info, UserPosition>,
+
+    #[account(
+        mut,
+        constraint = liquidator_token_account.owner == liquidator.key(),
+        constraint = liquidator_token_account.mint == token_mint.key(),
+    )]
+    pub liquidator_token_account: Account<'info, TokenAccount>,
+
+    #[account(mut)]
+    pub liquidator: Signer<'info>,
+
+    pub token_program: Program<'info, Token>,
+}
+
 // ============================================================
 // EVENTS
 // ============================================================
@@ -453,6 +981,54 @@ pub struct WithdrawEvent {
     pub amount: u64,
     pub remaining_deposit: u64,
     pub pool_available_liquidity: u64,
+    pub timestamp: i64,
+}
+
+#[event]
+pub struct CollateralDepositedEvent {
+    pub pool: Pubkey,
+    pub user: Pubkey,
+    pub amount: u64,
+    pub total_collateral: u64,
+    pub timestamp: i64,
+}
+
+#[event]
+pub struct CollateralWithdrawnEvent {
+    pub pool: Pubkey,
+    pub user: Pubkey,
+    pub amount: u64,
+    pub remaining_collateral: u64,
+    pub timestamp: i64,
+}
+
+#[event]
+pub struct BorrowEvent {
+    pub pool: Pubkey,
+    pub user: Pubkey,
+    pub amount: u64,
+    pub total_borrowed: u64,
+    pub collateral_sol: u64,
+    pub timestamp: i64,
+}
+
+#[event]
+pub struct RepayEvent {
+    pub pool: Pubkey,
+    pub user: Pubkey,
+    pub amount: u64,
+    pub remaining_borrow: u64,
+    pub remaining_interest: u64,
+    pub timestamp: i64,
+}
+
+#[event]
+pub struct LiquidationEvent {
+    pub pool: Pubkey,
+    pub liquidator: Pubkey,
+    pub borrower: Pubkey,
+    pub repaid_amount: u64,
+    pub collateral_seized: u64,
     pub timestamp: i64,
 }
 

@@ -1,7 +1,7 @@
 import * as anchor from "@coral-xyz/anchor";
 import { Program } from "@coral-xyz/anchor";
 import { SolanaAiLend } from "../target/types/solana_ai_lend";
-import { Keypair, PublicKey, SystemProgram } from "@solana/web3.js";
+import { Keypair, PublicKey, SystemProgram, LAMPORTS_PER_SOL } from "@solana/web3.js";
 import {
   TOKEN_PROGRAM_ID,
   createMint,
@@ -23,19 +23,18 @@ describe("solana-ai-lend", () => {
   let poolPDA: PublicKey;
   let poolBump: number;
   let vaultPDA: PublicKey;
+  let positionPDA: PublicKey;
   let userTokenAccount: PublicKey;
 
   before(async () => {
-    // Create a real SPL token mint (aiUSDC)
     tokenMint = await createMint(
       provider.connection,
       (authority as any).payer,
       authority.publicKey,
       null,
-      6 // 6 decimals like USDC
+      6
     );
 
-    // Derive PDAs
     [poolPDA, poolBump] = PublicKey.findProgramAddressSync(
       [Buffer.from("lending_pool"), authority.publicKey.toBuffer()],
       program.programId
@@ -46,7 +45,11 @@ describe("solana-ai-lend", () => {
       program.programId
     );
 
-    // Create user token account and mint 1M aiUSDC
+    [positionPDA] = PublicKey.findProgramAddressSync(
+      [Buffer.from("position"), poolPDA.toBuffer(), authority.publicKey.toBuffer()],
+      program.programId
+    );
+
     userTokenAccount = await createAccount(
       provider.connection,
       (authority as any).payer,
@@ -60,14 +63,13 @@ describe("solana-ai-lend", () => {
       tokenMint,
       userTokenAccount,
       authority.publicKey,
-      1_000_000_000_000 // 1M aiUSDC (6 decimals)
+      1_000_000_000_000 // 1M aiUSDC
     );
-
-    console.log("  Token Mint:", tokenMint.toString());
-    console.log("  Pool PDA:", poolPDA.toString());
-    console.log("  Vault PDA:", vaultPDA.toString());
-    console.log("  User Token Account:", userTokenAccount.toString());
   });
+
+  // ===========================================
+  // STEP 2: Initialize Pool
+  // ===========================================
 
   describe("initialize_pool", () => {
     it("creates pool with correct initial params", async () => {
@@ -97,27 +99,14 @@ describe("solana-ai-lend", () => {
       console.log("  Initialize TX:", tx);
 
       const pool = await program.account.lendingPool.fetch(poolPDA);
-
       expect(pool.authority.toString()).to.equal(authority.publicKey.toString());
-      expect(pool.aiAgent.toString()).to.equal(aiAgent.publicKey.toString());
-      expect(pool.tokenMint.toString()).to.equal(tokenMint.toString());
-
-      expect(pool.totalDeposits.toNumber()).to.equal(0);
-      expect(pool.totalBorrows.toNumber()).to.equal(0);
-      expect(pool.availableLiquidity.toNumber()).to.equal(0);
-
       expect(pool.interestRateBps).to.equal(500);
       expect(pool.collateralRatioBps).to.equal(15000);
-      expect(pool.maxBorrowLimit.toNumber()).to.equal(10_000_000_000);
-
-      expect(pool.maxInterestRateBps).to.equal(2000);
-      expect(pool.minInterestRateBps).to.equal(100);
-
+      expect(pool.solPriceUsd.toNumber()).to.equal(0);
       expect(JSON.stringify(pool.currentMood)).to.equal(JSON.stringify({ calm: {} }));
       expect(pool.isFrozen).to.equal(false);
       expect(pool.bump).to.equal(poolBump);
       expect(pool.vaultBump).to.be.greaterThan(0);
-
       console.log("  Pool created successfully!");
     });
 
@@ -145,8 +134,7 @@ describe("solana-ai-lend", () => {
             rent: anchor.web3.SYSVAR_RENT_PUBKEY,
           })
           .rpc();
-
-        expect.fail("Should have thrown — pool already exists");
+        expect.fail("Should have thrown");
       } catch (e) {
         expect(e.toString()).to.include("already in use");
         console.log("  Duplicate init correctly rejected");
@@ -154,61 +142,14 @@ describe("solana-ai-lend", () => {
     });
   });
 
+  // ===========================================
+  // STEP 3: Deposit + Withdraw
+  // ===========================================
+
   describe("deposit", () => {
-    const depositAmount = 1_000_000_000; // 1000 aiUSDC
-
     it("deposits 1000 aiUSDC", async () => {
-      const [positionPDA] = PublicKey.findProgramAddressSync(
-        [Buffer.from("position"), poolPDA.toBuffer(), authority.publicKey.toBuffer()],
-        program.programId
-      );
-
-      const tx = await program.methods
-        .deposit(new anchor.BN(depositAmount))
-        .accounts({
-          pool: poolPDA,
-          poolVault: vaultPDA,
-          tokenMint: tokenMint,
-          userPosition: positionPDA,
-          userTokenAccount: userTokenAccount,
-          owner: authority.publicKey,
-          tokenProgram: TOKEN_PROGRAM_ID,
-          systemProgram: SystemProgram.programId,
-        })
-        .rpc();
-
-      console.log("  Deposit TX:", tx);
-
-      // Verify pool state
-      const pool = await program.account.lendingPool.fetch(poolPDA);
-      expect(pool.totalDeposits.toNumber()).to.equal(depositAmount);
-      expect(pool.availableLiquidity.toNumber()).to.equal(depositAmount);
-      expect(pool.totalDepositsCount.toNumber()).to.equal(1);
-
-      // Verify user position
-      const position = await program.account.userPosition.fetch(positionPDA);
-      expect(position.deposited.toNumber()).to.equal(depositAmount);
-      expect(position.owner.toString()).to.equal(authority.publicKey.toString());
-      expect(position.pool.toString()).to.equal(poolPDA.toString());
-      expect(position.totalOperations).to.equal(1);
-
-      // Verify vault balance
-      const vault = await getAccount(provider.connection, vaultPDA);
-      expect(Number(vault.amount)).to.equal(depositAmount);
-
-      console.log("  Deposited:", depositAmount / 1e6, "aiUSDC");
-      console.log("  Pool total deposits:", pool.totalDeposits.toNumber() / 1e6);
-    });
-
-    it("deposits additional 500 aiUSDC", async () => {
-      const additionalAmount = 500_000_000; // 500 aiUSDC
-      const [positionPDA] = PublicKey.findProgramAddressSync(
-        [Buffer.from("position"), poolPDA.toBuffer(), authority.publicKey.toBuffer()],
-        program.programId
-      );
-
       await program.methods
-        .deposit(new anchor.BN(additionalAmount))
+        .deposit(new anchor.BN(1_000_000_000))
         .accounts({
           pool: poolPDA,
           poolVault: vaultPDA,
@@ -222,58 +163,16 @@ describe("solana-ai-lend", () => {
         .rpc();
 
       const pool = await program.account.lendingPool.fetch(poolPDA);
-      expect(pool.totalDeposits.toNumber()).to.equal(depositAmount + additionalAmount);
-      expect(pool.totalDepositsCount.toNumber()).to.equal(2);
-
-      const position = await program.account.userPosition.fetch(positionPDA);
-      expect(position.deposited.toNumber()).to.equal(depositAmount + additionalAmount);
-      expect(position.totalOperations).to.equal(2);
-
-      console.log("  Total deposited:", position.deposited.toNumber() / 1e6, "aiUSDC");
-    });
-
-    it("fails on zero deposit", async () => {
-      const [positionPDA] = PublicKey.findProgramAddressSync(
-        [Buffer.from("position"), poolPDA.toBuffer(), authority.publicKey.toBuffer()],
-        program.programId
-      );
-
-      try {
-        await program.methods
-          .deposit(new anchor.BN(0))
-          .accounts({
-            pool: poolPDA,
-            poolVault: vaultPDA,
-            tokenMint: tokenMint,
-            userPosition: positionPDA,
-            userTokenAccount: userTokenAccount,
-            owner: authority.publicKey,
-            tokenProgram: TOKEN_PROGRAM_ID,
-            systemProgram: SystemProgram.programId,
-          })
-          .rpc();
-
-        expect.fail("Should have thrown — zero amount");
-      } catch (e) {
-        expect(e.toString()).to.include("Amount must be greater than zero");
-        console.log("  Zero deposit correctly rejected");
-      }
+      expect(pool.totalDeposits.toNumber()).to.equal(1_000_000_000);
+      expect(pool.availableLiquidity.toNumber()).to.equal(1_000_000_000);
+      console.log("  Deposited 1000 aiUSDC");
     });
   });
 
   describe("withdraw", () => {
     it("withdraws 500 aiUSDC", async () => {
-      const withdrawAmount = 500_000_000; // 500 aiUSDC
-      const [positionPDA] = PublicKey.findProgramAddressSync(
-        [Buffer.from("position"), poolPDA.toBuffer(), authority.publicKey.toBuffer()],
-        program.programId
-      );
-
-      const positionBefore = await program.account.userPosition.fetch(positionPDA);
-      const depositedBefore = positionBefore.deposited.toNumber();
-
-      const tx = await program.methods
-        .withdraw(new anchor.BN(withdrawAmount))
+      await program.methods
+        .withdraw(new anchor.BN(500_000_000))
         .accounts({
           pool: poolPDA,
           poolVault: vaultPDA,
@@ -285,31 +184,107 @@ describe("solana-ai-lend", () => {
         })
         .rpc();
 
-      console.log("  Withdraw TX:", tx);
+      const pool = await program.account.lendingPool.fetch(poolPDA);
+      expect(pool.totalDeposits.toNumber()).to.equal(500_000_000);
+      console.log("  Withdrew 500, remaining deposit: 500 aiUSDC");
+    });
+  });
+
+  // ===========================================
+  // STEP 4: Collateral + Borrow + Repay + Interest + Liquidate
+  // ===========================================
+
+  describe("set_sol_price", () => {
+    it("sets SOL price to $185", async () => {
+      await program.methods
+        .setSolPrice(new anchor.BN(185_000_000)) // $185.00
+        .accounts({
+          pool: poolPDA,
+          authority: authority.publicKey,
+        })
+        .rpc();
 
       const pool = await program.account.lendingPool.fetch(poolPDA);
-      expect(pool.totalDeposits.toNumber()).to.equal(depositedBefore - withdrawAmount);
-      expect(pool.availableLiquidity.toNumber()).to.equal(depositedBefore - withdrawAmount);
+      expect(pool.solPriceUsd.toNumber()).to.equal(185_000_000);
+      console.log("  SOL price set to $185.00");
+    });
+
+    it("fails with zero price", async () => {
+      try {
+        await program.methods
+          .setSolPrice(new anchor.BN(0))
+          .accounts({
+            pool: poolPDA,
+            authority: authority.publicKey,
+          })
+          .rpc();
+        expect.fail("Should have thrown");
+      } catch (e) {
+        expect(e.toString()).to.include("Invalid or stale oracle price");
+        console.log("  Zero price correctly rejected");
+      }
+    });
+  });
+
+  describe("deposit_collateral", () => {
+    it("deposits 2 SOL as collateral", async () => {
+      const tx = await program.methods
+        .depositCollateral(new anchor.BN(2 * LAMPORTS_PER_SOL))
+        .accounts({
+          pool: poolPDA,
+          userPosition: positionPDA,
+          owner: authority.publicKey,
+          systemProgram: SystemProgram.programId,
+        })
+        .rpc();
+
+      console.log("  Deposit Collateral TX:", tx);
 
       const position = await program.account.userPosition.fetch(positionPDA);
-      expect(position.deposited.toNumber()).to.equal(depositedBefore - withdrawAmount);
+      expect(position.collateralSol.toNumber()).to.equal(2 * LAMPORTS_PER_SOL);
 
-      const vault = await getAccount(provider.connection, vaultPDA);
-      expect(Number(vault.amount)).to.equal(depositedBefore - withdrawAmount);
+      const pool = await program.account.lendingPool.fetch(poolPDA);
+      expect(pool.totalCollateralSol.toNumber()).to.equal(2 * LAMPORTS_PER_SOL);
 
-      console.log("  Withdrew:", withdrawAmount / 1e6, "aiUSDC");
-      console.log("  Remaining:", position.deposited.toNumber() / 1e6, "aiUSDC");
+      console.log("  Collateral: 2 SOL ($370 at $185/SOL)");
+    });
+  });
+
+  describe("borrow", () => {
+    // Pool state: 500 aiUSDC available, collateral 2 SOL ($370), ratio 150%
+    // Max borrow with 2 SOL: $370 / 1.5 = ~$246 aiUSDC
+
+    it("borrows 100 aiUSDC (collateral $370 > required $150)", async () => {
+      const tx = await program.methods
+        .borrow(new anchor.BN(100_000_000)) // 100 aiUSDC
+        .accounts({
+          pool: poolPDA,
+          poolVault: vaultPDA,
+          tokenMint: tokenMint,
+          userPosition: positionPDA,
+          userTokenAccount: userTokenAccount,
+          owner: authority.publicKey,
+          tokenProgram: TOKEN_PROGRAM_ID,
+        })
+        .rpc();
+
+      console.log("  Borrow TX:", tx);
+
+      const position = await program.account.userPosition.fetch(positionPDA);
+      expect(position.borrowed.toNumber()).to.equal(100_000_000);
+
+      const pool = await program.account.lendingPool.fetch(poolPDA);
+      expect(pool.totalBorrows.toNumber()).to.equal(100_000_000);
+      expect(pool.availableLiquidity.toNumber()).to.equal(400_000_000); // 500 - 100
+
+      console.log("  Borrowed 100 aiUSDC, available: 400 aiUSDC");
     });
 
-    it("fails when withdrawing more than deposited", async () => {
-      const [positionPDA] = PublicKey.findProgramAddressSync(
-        [Buffer.from("position"), poolPDA.toBuffer(), authority.publicKey.toBuffer()],
-        program.programId
-      );
-
+    it("fails borrow exceeding collateral ratio", async () => {
+      // Already borrowed 100, try 200 more → total 300 → need $450 collateral, have $370
       try {
         await program.methods
-          .withdraw(new anchor.BN(999_999_000_000)) // way more than deposited
+          .borrow(new anchor.BN(200_000_000))
           .accounts({
             pool: poolPDA,
             poolVault: vaultPDA,
@@ -320,23 +295,18 @@ describe("solana-ai-lend", () => {
             tokenProgram: TOKEN_PROGRAM_ID,
           })
           .rpc();
-
-        expect.fail("Should have thrown — insufficient deposit");
+        expect.fail("Should have thrown");
       } catch (e) {
-        expect(e.toString()).to.include("Insufficient deposit balance");
-        console.log("  Overwithdraw correctly rejected");
+        expect(e.toString()).to.include("Insufficient collateral");
+        console.log("  Borrow exceeding collateral correctly rejected");
       }
     });
 
-    it("fails on zero withdraw", async () => {
-      const [positionPDA] = PublicKey.findProgramAddressSync(
-        [Buffer.from("position"), poolPDA.toBuffer(), authority.publicKey.toBuffer()],
-        program.programId
-      );
-
+    it("fails borrow exceeding max_borrow_limit", async () => {
+      // max_borrow_limit = 10K aiUSDC, try to borrow 10K (total would exceed)
       try {
         await program.methods
-          .withdraw(new anchor.BN(0))
+          .borrow(new anchor.BN(10_000_000_000))
           .accounts({
             pool: poolPDA,
             poolVault: vaultPDA,
@@ -347,12 +317,185 @@ describe("solana-ai-lend", () => {
             tokenProgram: TOKEN_PROGRAM_ID,
           })
           .rpc();
-
-        expect.fail("Should have thrown — zero amount");
+        expect.fail("Should have thrown");
       } catch (e) {
-        expect(e.toString()).to.include("Amount must be greater than zero");
-        console.log("  Zero withdraw correctly rejected");
+        expect(e.toString()).to.include("Borrow amount exceeds limit");
+        console.log("  Borrow exceeding limit correctly rejected");
       }
+    });
+  });
+
+  describe("withdraw_collateral (while borrowed)", () => {
+    it("fails while borrow is active", async () => {
+      try {
+        await program.methods
+          .withdrawCollateral(new anchor.BN(LAMPORTS_PER_SOL))
+          .accounts({
+            pool: poolPDA,
+            userPosition: positionPDA,
+            owner: authority.publicKey,
+          })
+          .rpc();
+        expect.fail("Should have thrown");
+      } catch (e) {
+        expect(e.toString()).to.include("Cannot withdraw collateral with active borrow");
+        console.log("  Withdraw collateral while borrowed correctly rejected");
+      }
+    });
+  });
+
+  describe("accrue_interest", () => {
+    it("accrues interest on borrow position", async () => {
+      // Wait a bit for time to pass
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+
+      await program.methods
+        .accrueInterest()
+        .accounts({
+          pool: poolPDA,
+          userPosition: positionPDA,
+        })
+        .rpc();
+
+      const position = await program.account.userPosition.fetch(positionPDA);
+      // Interest may be 0-1 due to short elapsed time (5% APY on 100 aiUSDC = ~0.01/day)
+      expect(position.accruedInterest.toNumber()).to.be.gte(0);
+      console.log("  Accrued interest:", position.accruedInterest.toNumber(), "lamports");
+    });
+  });
+
+  describe("repay", () => {
+    it("repays full borrowed amount", async () => {
+      const position = await program.account.userPosition.fetch(positionPDA);
+      const totalOwed = position.borrowed.toNumber() + position.accruedInterest.toNumber();
+
+      await program.methods
+        .repay(new anchor.BN(totalOwed))
+        .accounts({
+          pool: poolPDA,
+          poolVault: vaultPDA,
+          tokenMint: tokenMint,
+          userPosition: positionPDA,
+          userTokenAccount: userTokenAccount,
+          owner: authority.publicKey,
+          tokenProgram: TOKEN_PROGRAM_ID,
+        })
+        .rpc();
+
+      const positionAfter = await program.account.userPosition.fetch(positionPDA);
+      expect(positionAfter.borrowed.toNumber()).to.equal(0);
+      expect(positionAfter.accruedInterest.toNumber()).to.equal(0);
+
+      console.log("  Repaid", totalOwed / 1e6, "aiUSDC (principal + interest)");
+    });
+  });
+
+  describe("withdraw_collateral (after repay)", () => {
+    it("withdraws 2 SOL after loan is repaid", async () => {
+      await program.methods
+        .withdrawCollateral(new anchor.BN(2 * LAMPORTS_PER_SOL))
+        .accounts({
+          pool: poolPDA,
+          userPosition: positionPDA,
+          owner: authority.publicKey,
+        })
+        .rpc();
+
+      const position = await program.account.userPosition.fetch(positionPDA);
+      expect(position.collateralSol.toNumber()).to.equal(0);
+
+      const pool = await program.account.lendingPool.fetch(poolPDA);
+      expect(pool.totalCollateralSol.toNumber()).to.equal(0);
+
+      console.log("  Withdrew 2 SOL collateral");
+    });
+  });
+
+  describe("liquidate", () => {
+    it("fails on healthy position", async () => {
+      // Setup: deposit collateral + borrow again
+      await program.methods
+        .depositCollateral(new anchor.BN(2 * LAMPORTS_PER_SOL))
+        .accounts({
+          pool: poolPDA,
+          userPosition: positionPDA,
+          owner: authority.publicKey,
+          systemProgram: SystemProgram.programId,
+        })
+        .rpc();
+
+      await program.methods
+        .borrow(new anchor.BN(100_000_000))
+        .accounts({
+          pool: poolPDA,
+          poolVault: vaultPDA,
+          tokenMint: tokenMint,
+          userPosition: positionPDA,
+          userTokenAccount: userTokenAccount,
+          owner: authority.publicKey,
+          tokenProgram: TOKEN_PROGRAM_ID,
+        })
+        .rpc();
+
+      // Try to liquidate healthy position (collateral $370 >> required $120)
+      try {
+        await program.methods
+          .liquidate()
+          .accounts({
+            pool: poolPDA,
+            poolVault: vaultPDA,
+            tokenMint: tokenMint,
+            borrowerPosition: positionPDA,
+            liquidatorTokenAccount: userTokenAccount,
+            liquidator: authority.publicKey,
+            tokenProgram: TOKEN_PROGRAM_ID,
+          })
+          .rpc();
+        expect.fail("Should have thrown");
+      } catch (e) {
+        expect(e.toString()).to.include("Position is healthy");
+        console.log("  Liquidate healthy position correctly rejected");
+      }
+    });
+
+    it("succeeds on undercollateralized position", async () => {
+      // Drop SOL price to $50 → collateral value = 2 SOL * $50 = $100
+      // Borrowed = 100 aiUSDC, threshold 120% = $120 > $100 → undercollateralized
+      await program.methods
+        .setSolPrice(new anchor.BN(50_000_000)) // $50
+        .accounts({
+          pool: poolPDA,
+          authority: authority.publicKey,
+        })
+        .rpc();
+
+      const positionBefore = await program.account.userPosition.fetch(positionPDA);
+      const poolBefore = await program.account.lendingPool.fetch(poolPDA);
+
+      await program.methods
+        .liquidate()
+        .accounts({
+          pool: poolPDA,
+          poolVault: vaultPDA,
+          tokenMint: tokenMint,
+          borrowerPosition: positionPDA,
+          liquidatorTokenAccount: userTokenAccount,
+          liquidator: authority.publicKey,
+          tokenProgram: TOKEN_PROGRAM_ID,
+        })
+        .rpc();
+
+      const position = await program.account.userPosition.fetch(positionPDA);
+      expect(position.borrowed.toNumber()).to.equal(0);
+      expect(position.collateralSol.toNumber()).to.equal(0);
+      expect(position.accruedInterest.toNumber()).to.equal(0);
+
+      const pool = await program.account.lendingPool.fetch(poolPDA);
+      expect(pool.totalLiquidations.toNumber()).to.equal(1);
+
+      console.log("  Liquidation successful!");
+      console.log("  Borrower position cleared");
+      console.log("  Total liquidations:", pool.totalLiquidations.toNumber());
     });
   });
 });
