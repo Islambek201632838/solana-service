@@ -14,7 +14,7 @@ class Settings(BaseSettings):
     database_url: str = "sqlite+aiosqlite:///decisions.db"
 
     # CORS
-    cors_origins: list[str] = ["http://localhost:5173"]
+    cors_origins: str = "http://localhost:5173"
 
     # JWT
     jwt_secret: str = ""
