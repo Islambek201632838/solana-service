@@ -2,7 +2,7 @@ use anchor_lang::prelude::*;
 use anchor_lang::system_program;
 use anchor_spl::token::{self, Mint, Token, TokenAccount, Transfer};
 
-declare_id!("HfTwgCwDTHpfrCKkgrruiuHaMKj79AVjyQSTwyoH9NVy");
+declare_id!("8SGxBGi7RuYas8r7rU4e6hxDLGo7Hw4f3nNytCqEu5AJ");
 
 #[program]
 pub mod solana_ai_lend {

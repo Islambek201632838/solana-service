@@ -4,8 +4,10 @@ import aiosqlite
 from datetime import datetime, timezone
 
 
+import os
+
 class DecisionLogger:
-    def __init__(self, db_path: str = "decisions.db"):
+    def __init__(self, db_path: str = os.environ.get("DECISIONS_DB_PATH", "decisions.db")):
         self.db_path = db_path
 
     async def _connect(self) -> aiosqlite.Connection:

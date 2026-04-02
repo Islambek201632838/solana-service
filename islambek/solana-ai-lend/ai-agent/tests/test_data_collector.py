@@ -16,7 +16,7 @@ from config import Settings
 def settings():
     return Settings(
         gemini_api_key="test-key",
-        program_id="HfTwgCwDTHpfrCKkgrruiuHaMKj79AVjyQSTwyoH9NVy",
+        program_id="test-program-id",
     )
 
 

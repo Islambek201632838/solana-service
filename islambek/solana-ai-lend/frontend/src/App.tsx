@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { ConnectionProvider, WalletProvider } from "@solana/wallet-adapter-react";
 import { WalletModalProvider } from "@solana/wallet-adapter-react-ui";
 import { PhantomWalletAdapter, SolflareWalletAdapter } from "@solana/wallet-adapter-wallets";
@@ -20,7 +20,6 @@ import AiDecisions from "./pages/AiDecisions";
 import Analytics from "./pages/Analytics";
 
 const endpoint = import.meta.env.VITE_SOLANA_RPC || clusterApiUrl("devnet");
-const wallets = [new PhantomWalletAdapter(), new SolflareWalletAdapter()];
 
 function DashboardPage() {
   const { stats, state, loading } = usePool();
@@ -73,6 +72,7 @@ function ActivePage({ tab }: { tab: string }) {
 
 export default function App() {
   const [activeTab, setActiveTab] = useState("dashboard");
+  const wallets = useMemo(() => [new PhantomWalletAdapter(), new SolflareWalletAdapter()], []);
 
   return (
     <ConnectionProvider endpoint={endpoint}>

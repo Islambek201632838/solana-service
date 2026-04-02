@@ -1,5 +1,7 @@
 FROM node:20-alpine AS build
 
+RUN apk add --no-cache python3 make g++ linux-headers eudev-dev
+
 WORKDIR /app
 
 ARG VITE_API_URL
@@ -8,7 +10,7 @@ ARG VITE_SOLANA_RPC
 ARG VITE_PROGRAM_ID
 
 COPY package.json package-lock.json ./
-RUN npm ci
+RUN npm ci --ignore-scripts && npm rebuild
 
 COPY . .
 RUN npm run build

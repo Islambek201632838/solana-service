@@ -9,8 +9,10 @@ import asyncio
 import aiosqlite
 
 
+import os
+
 class DecisionService:
-    def __init__(self, db_path: str = "../ai-agent/decisions.db"):
+    def __init__(self, db_path: str = os.environ.get("DECISIONS_DB_PATH", "../ai-agent/decisions.db")):
         self.db_path = db_path
         self._init_lock = asyncio.Lock()
         self._table_ready = False

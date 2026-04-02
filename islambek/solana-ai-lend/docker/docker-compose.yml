@@ -45,15 +45,17 @@ services:
       - ../.env
     environment:
       - CORS_ORIGINS=http://localhost:3000,http://localhost:80,http://localhost
+      - DECISIONS_DB_PATH=/app/data/decisions.db
     ports:
       - "127.0.0.1:8000:8000"
     volumes:
       - sqlite_data:/app/data
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')"]
-      interval: 10s
+      interval: 300s
       timeout: 5s
-      retries: 3
+      retries: 5
+      start_period: 15s
     networks:
       - internal
 
@@ -67,6 +69,8 @@ services:
     restart: unless-stopped
     env_file:
       - ../.env
+    environment:
+      - DECISIONS_DB_PATH=/app/data/decisions.db
     volumes:
       - ../keys:/app/keys:ro
       - sqlite_data:/app/data
@@ -87,7 +91,9 @@ services:
         VITE_API_URL: ${VITE_API_URL:-http://localhost:8000}
         VITE_WS_URL: ${VITE_WS_URL:-ws://localhost:8000/ws}
         VITE_SOLANA_RPC: ${VITE_SOLANA_RPC:-https://api.devnet.solana.com}
-        VITE_PROGRAM_ID: ${VITE_PROGRAM_ID}
+        VITE_PROGRAM_ID: ${VITE_PROGRAM_ID:-${PROGRAM_ID}}
+    env_file:
+      - ../.env
     restart: unless-stopped
     ports:
       - "0.0.0.0:3000:80"

@@ -6,16 +6,16 @@ resolution = true
 skip-lint = false
 
 [programs.devnet]
-solana_ai_lend = "HfTwgCwDTHpfrCKkgrruiuHaMKj79AVjyQSTwyoH9NVy"
+solana_ai_lend = "8SGxBGi7RuYas8r7rU4e6hxDLGo7Hw4f3nNytCqEu5AJ"
 
 [programs.localnet]
-solana_ai_lend = "HfTwgCwDTHpfrCKkgrruiuHaMKj79AVjyQSTwyoH9NVy"
+solana_ai_lend = "8SGxBGi7RuYas8r7rU4e6hxDLGo7Hw4f3nNytCqEu5AJ"
 
 [registry]
 url = "https://api.apr.dev"
 
 [provider]
-cluster = "localnet"
+cluster = "devnet"
 wallet = "./keys/deployer.json"
 
 [test]

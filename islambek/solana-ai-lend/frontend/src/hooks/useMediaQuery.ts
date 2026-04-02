@@ -1,7 +1,10 @@
 import { useState, useEffect } from "react";
 
 export function useMediaQuery(query: string) {
-  const [matches, setMatches] = useState(false);
+  const [matches, setMatches] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return window.matchMedia(query).matches;
+  });
 
   useEffect(() => {
     const mql = window.matchMedia(query);
@@ -15,8 +18,11 @@ export function useMediaQuery(query: string) {
 }
 
 export function useBreakpoint() {
-  const isMobile = !useMediaQuery("(min-width: 768px)");
-  const isTablet = useMediaQuery("(min-width: 768px)") && !useMediaQuery("(min-width: 1024px)");
-  const isDesktop = useMediaQuery("(min-width: 1024px)");
-  return { isMobile, isTablet, isDesktop };
+  const md = useMediaQuery("(min-width: 768px)");
+  const lg = useMediaQuery("(min-width: 1024px)");
+  return {
+    isMobile: !md,
+    isTablet: md && !lg,
+    isDesktop: lg,
+  };
 }

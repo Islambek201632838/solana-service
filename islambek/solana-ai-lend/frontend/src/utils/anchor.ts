@@ -1,9 +1,8 @@
-import { Connection, PublicKey } from "@solana/web3.js";
+import { Connection, PublicKey, SystemProgram } from "@solana/web3.js";
 import { AnchorProvider, BN } from "@coral-xyz/anchor";
 
-const PROGRAM_ID = new PublicKey(
-  import.meta.env.VITE_PROGRAM_ID || "HfTwgCwDTHpfrCKkgrruiuHaMKj79AVjyQSTwyoH9NVy"
-);
+const programId = import.meta.env.VITE_PROGRAM_ID;
+const PROGRAM_ID = new PublicKey(programId || SystemProgram.programId);
 
 export function getProvider(wallet: any, connection: Connection): AnchorProvider {
   return new AnchorProvider(connection, wallet, { commitment: "confirmed" });
