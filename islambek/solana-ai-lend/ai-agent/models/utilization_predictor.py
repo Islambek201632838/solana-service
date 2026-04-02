@@ -1,12 +1,6 @@
 """Utilization Predictor — forecast future utilization from trends."""
 
-import numpy as np
-from sklearn.linear_model import LinearRegression
-
-
 class UtilizationPredictor:
-    def __init__(self):
-        self.model = LinearRegression()
 
     def predict(
         self,
