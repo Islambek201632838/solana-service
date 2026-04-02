@@ -1,9 +1,12 @@
 from pydantic_settings import BaseSettings
+from pydantic import ConfigDict
 
 
 class Settings(BaseSettings):
+    model_config = ConfigDict(env_file="../.env", extra="ignore")
+
     # Gemini AI
-    gemini_api_key: str
+    gemini_api_key: str = ""
     gemini_model: str = "gemini-2.0-flash"
 
     # Solana Devnet
@@ -22,6 +25,3 @@ class Settings(BaseSettings):
 
     # Database
     database_url: str = "sqlite+aiosqlite:///decisions.db"
-
-    class Config:
-        env_file = ".env"
