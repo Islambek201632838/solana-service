@@ -2,14 +2,30 @@
 ai_dispute_resolver/
 ai_dynamic_nft/
 
+# ===============================
+# СЕКРЕТЫ — НИКОГДА не коммитить
+# ===============================
+.env
+.env.local
+.env.production
+.env.*.local
+docker/.env
 
-
-# Ключи
+# Keypairs / ключи
 keys/
-*.json
-!package.json
-!tsconfig.json
-!Anchor.toml
+*.keypair
+*-keypair.json
+deployer.json
+ai-agent.json
+
+# SSL сертификаты
+*.pem
+*.key
+*.crt
+
+# ===============================
+# Build artifacts
+# ===============================
 
 # Node
 node_modules/
@@ -27,20 +43,21 @@ venv/
 target/
 .anchor/
 
-# IDE
+# Docker volumes
+pgdata/
+
+# ===============================
+# IDE / OS
+# ===============================
 .vscode/
 .idea/
 *.swp
 *.swo
-
-# Env
-.env
-.env.local
-.env.production
-
-# OS
 .DS_Store
 Thumbs.db
 
 # Logs
 *.log
+
+# Claude Code
+.claude/settings.local.json

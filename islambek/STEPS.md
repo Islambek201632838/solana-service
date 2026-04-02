@@ -1,7 +1,7 @@
 # SolanaAI Lend — План реализации (15 степов)
 
 Дедлайн: **7 апреля 2026, 23:59 GMT+5**
-Общий объём: **~46 часов**
+Общий объём: **~48 часов**
 
 ---
 
@@ -19,21 +19,45 @@
 - Инициализировать `frontend/` → `npm create vite@latest` с React + TS
 - Инициализировать `backend/` → FastAPI scaffold
 
-**Результат:** Проект компилируется (`anchor build`), devnet подключён, все 4 части существуют.
+**Security (обязательно с первого дня):**
+- Создать `.env.example` с placeholder-ами (REPLACE_ME) → коммитить
+- Создать `.env` с реальными значениями → НЕ коммитить (.gitignore)
+- Сгенерировать сильные пароли:
+  - `openssl rand -hex 32` для POSTGRES_PASSWORD
+  - `openssl rand -base64 48` для JWT_SECRET
+- Keypairs в `keys/` → в .gitignore
+- Проверить: `git status` — ни один .env или .json ключ не tracked
+
+**Результат:** Проект компилируется (`anchor build`), devnet подключён, все 4 части существуют, секреты в .env.
 
 **Файлы:**
 ```
 solana-ai-lend/
 ├── Anchor.toml
-├── programs/solana-ai-lend/src/lib.rs    (пустой scaffold)
-├── ai-agent/main.py                      (hello world)
-├── backend/main.py                       (hello world)
-├── frontend/src/App.tsx                   (hello world)
-├── keys/deployer.json
-└── keys/ai-agent.json
+├── .env.example                          (с REPLACE_ME — в git)
+├── .env                                  (с реальными ключами — НЕ в git)
+├── .gitignore                            (секреты исключены)
+├── programs/solana-ai-lend/src/lib.rs
+├── ai-agent/main.py
+├── ai-agent/.env                         (GEMINI_API_KEY — НЕ в git)
+├── backend/main.py
+├── frontend/src/App.tsx
+├── docker/docker-compose.yml             (все секреты через ${VAR})
+├── docker/.env                           (→ .gitignore)
+├── docker/nginx.conf
+└── keys/                                 (→ .gitignore)
+    ├── deployer.json
+    └── ai-agent.json
 ```
 
-**Проверка:** `anchor build` → OK, `solana balance` → 2+ SOL
+**Проверка:**
+```bash
+anchor build → OK
+solana balance → 2+ SOL
+grep -r "AIzaSy" . --exclude-dir=.git → пусто (нет ключей в коде)
+cat .env.example → все значения REPLACE_ME
+git status → .env и keys/ НЕ в списке
+```
 
 ---
 
@@ -125,31 +149,41 @@ liquidate при healthy position → ERROR PositionHealthy ✓
 
 ---
 
-### Степ 5 — AI update_parameters + Guard Rails + Events
-**Время:** ~3 часа
+### Степ 5 — AI update_parameters + Guard Rails + Events + Emergency
+**Время:** ~4 часа
 **Задача:**
-- Инструкция `update_parameters` с `has_one = ai_agent`
-- Guard rails:
-  - Ставка в [min_rate, max_rate]
-  - Залог в [min_collateral, max_collateral]
-  - Cooldown между обновлениями
-  - Макс изменение ≤ 20% за раз
-- `AiDecisionLog` с `reasoning_short` (256 chars) + `reasoning_hash`
-- `ProtocolMood` обновление на основе risk_level
-- `ProtocolStats` инкремент: total_ai_updates / total_ai_skips
-- Инструкция `challenge_ai_decision`
-- Events: `AiParametersUpdated`, `AiCycleSkipped`, `AiDecisionChallenged`, `EmergencyFreeze`
-- Инструкция `emergency_freeze` (owner only)
 
-**Результат:** Тест — AI обновляет параметры → лог записан. AI нарушает лимит → TX rejected.
+**Ядро (обязательно):**
+- Инструкция `update_parameters`:
+  - Аргументы: rate, collateral, max_borrow, reasoning_hash, reasoning_short, confidence, risk_level
+  - has_one = ai_agent (Anchor constraint)
+  - Guard rails: ставка [min,max], залог [min,max], cooldown, макс изменение ≤20%
+  - Создание AiDecisionLog (PDA seeds: ["decision_log", pool, update_count])
+  - reasoning_short: String on-chain (≤256 chars)
+  - Обновление ProtocolMood по risk_level
+  - Инкремент total_ai_updates
+  - Event: ParametersUpdatedEvent
+- Инструкция `emergency_freeze` (owner only) → is_frozen = true
+  - Event: EmergencyFreezeEvent
+- Все инструкции проверяют !pool.is_frozen (кроме withdraw и repay — всегда доступны)
+
+**Бонус (если останется время):**
+- Инструкция `challenge_ai_decision` (governance-lite)
+
+**Результат:** Тест — AI обновляет параметры → reasoning_short и mood записаны on-chain. Нарушение лимита → TX rejected. Emergency freeze → всё заблокировано.
 
 **Проверка:**
 ```
-update_parameters(rate=650) при текущей 500 → OK (изменение 30% > 20%) → ERROR ✓
-update_parameters(rate=550) → OK (изменение 10%) ✓
-update_parameters сразу после → ERROR CooldownActive ✓
-update_parameters от чужого ключа → ERROR Unauthorized ✓
-challenge_ai_decision → event emitted ✓
+update_parameters(rate=650) при текущей 500 → 30% > 20% → ERROR ChangeTooLarge ✓
+update_parameters(rate=550, reasoning="RSI=72...", risk=Medium) → OK ✓
+  → AiDecisionLog.reasoning_short == "RSI=72..." ✓
+  → pool.current_mood == Cautious ✓
+  → pool.total_ai_updates == 1 ✓
+update_parameters сразу → ERROR CooldownActive ✓
+update_parameters от чужого ключа → ERROR (has_one) ✓
+emergency_freeze → pool.is_frozen == true ✓
+borrow после freeze → ERROR ProtocolFrozen ✓
+withdraw после freeze → OK (всегда доступен) ✓
 ```
 
 ---
@@ -515,7 +549,7 @@ Mobile (375px в DevTools):
   2   Контракт   State + Initialize              2    1
   3   Контракт   Deposit + Withdraw              3    2
   4   Контракт   Collateral+Borrow+Interest      4    3
-  5   Контракт   AI update + Guards + Events     3    4
+  5   Контракт   AI update + Guards + Emergency  4    4
   6   AI Agent   Config + Data Collector          2    1
   7   AI Agent   Quant Engine (math)              3    6
   8   AI Agent   ML Engine (sklearn)              3    7
@@ -527,7 +561,7 @@ Mobile (375px в DevTools):
  14   Frontend   Adaptive Pages + AI Log          5    12, 13
  15   Polish     Integration + Demo + Submit      4    14
 ─────────────────────────────────────────────────────────────────
-                                           ИТОГО: 46 часов
+                                           ИТОГО: 48 часов
 
 Параллельность:
   Степы 6-9 (AI Agent) можно делать ПАРАЛЛЕЛЬНО со степами 3-5 (контракт)

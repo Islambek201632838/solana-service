@@ -257,6 +257,16 @@ pub mod solana_ai_lend {
         pool.min_collateral_ratio_bps = params.min_collateral_ratio_bps;
         pool.max_collateral_ratio_bps = params.max_collateral_ratio_bps;
 
+        pool.sol_usd_price_feed = params.sol_usd_price_feed;
+        pool.total_collateral_sol = 0;
+        pool.total_deposits_count = 0;
+        pool.total_borrows_count = 0;
+        pool.total_ai_updates = 0;
+        pool.total_ai_skips = 0;
+        pool.total_liquidations = 0;
+        pool.current_mood = ProtocolMood::Calm;
+        pool.is_frozen = false;
+        pool.protocol_created_at = Clock::get()?.unix_timestamp;
         pool.last_update = Clock::get()?.unix_timestamp;
         pool.update_cooldown = 600; // 10 мин
         pool.bump = ctx.bumps.pool;
@@ -284,9 +294,20 @@ pub mod solana_ai_lend {
 
         // Обновить позицию пользователя
         let position = &mut ctx.accounts.position;
+        let now = Clock::get()?.unix_timestamp;
+
+        // Первый deposit — инициализировать время
+        if position.first_deposit_at == 0 {
+            position.first_deposit_at = now;
+            position.last_interest_update = now;
+            position.owner = ctx.accounts.owner.key();
+            position.loyalty_tier = LoyaltyTier::Bronze;
+        }
+
         position.deposited = position.deposited
             .checked_add(amount)
             .ok_or(ErrorCode::MathOverflow)?;
+        position.total_operations += 1;
 
         // Обновить пул
         let pool = &mut ctx.accounts.pool;
@@ -296,6 +317,7 @@ pub mod solana_ai_lend {
         pool.available_liquidity = pool.available_liquidity
             .checked_add(amount)
             .ok_or(ErrorCode::MathOverflow)?;
+        pool.total_deposits_count += 1;
 
         emit!(DepositEvent {
             user: ctx.accounts.owner.key(),
@@ -307,11 +329,30 @@ pub mod solana_ai_lend {
     }
 
     /// Лендер забирает aiUSDC + проценты
+    /// ВАЖНО: начисляем проценты перед выводом, чтобы пользователь не терял доход
     pub fn withdraw(ctx: Context<Withdraw>, amount: u64) -> Result<()> {
         require!(amount > 0, ErrorCode::ZeroAmount);
 
-        let position = &ctx.accounts.position;
-        require!(position.deposited >= amount, ErrorCode::InsufficientDeposit);
+        // Начислить проценты перед выводом
+        let pool = &ctx.accounts.pool;
+        let position = &mut ctx.accounts.position;
+        let now = Clock::get()?.unix_timestamp;
+        let elapsed = now.saturating_sub(position.last_interest_update) as u64;
+        if elapsed > 0 && position.deposited > 0 {
+            let seconds_per_year: u64 = 31_557_600;
+            let interest = (position.deposited as u128)
+                .checked_mul(pool.interest_rate_bps as u128).ok_or(ErrorCode::MathOverflow)?
+                .checked_mul(elapsed as u128).ok_or(ErrorCode::MathOverflow)?
+                .checked_div(seconds_per_year as u128 * 10000).ok_or(ErrorCode::MathOverflow)? as u64;
+            position.accrued_interest = position.accrued_interest
+                .checked_add(interest).ok_or(ErrorCode::MathOverflow)?;
+            position.last_interest_update = now;
+        }
+
+        // withdrawable = deposited + accrued_interest
+        let withdrawable = position.deposited
+            .checked_add(position.accrued_interest).ok_or(ErrorCode::MathOverflow)?;
+        require!(withdrawable >= amount, ErrorCode::InsufficientDeposit);
 
         let pool = &ctx.accounts.pool;
         require!(pool.available_liquidity >= amount, ErrorCode::InsufficientLiquidity);
@@ -493,17 +534,21 @@ pub mod solana_ai_lend {
         new_collateral_ratio: u16,
         new_max_borrow: u64,
         reasoning_hash: [u8; 32],
+        reasoning_short: String,       // краткое объяснение (≤256 chars)
         confidence: u8,
+        risk_level: RiskLevel,
     ) -> Result<()> {
-        let pool = &mut ctx.accounts.pool;
+        require!(reasoning_short.len() <= 256, ErrorCode::ReasoningTooLong);
 
-        // ПРОВЕРКА 1: авторизация — has_one = ai_agent в Anchor (ниже в #[derive(Accounts)])
+        let pool = &mut ctx.accounts.pool;
+        require!(!pool.is_frozen, ErrorCode::ProtocolFrozen);
+
+        // ПРОВЕРКА 1: авторизация — has_one = ai_agent в Anchor
 
         // ПРОВЕРКА 2: прошёл cooldown?
         let now = Clock::get()?.unix_timestamp;
         require!(
-            now.checked_sub(pool.last_update)
-                .ok_or(ErrorCode::MathOverflow)? >= pool.update_cooldown,
+            now.saturating_sub(pool.last_update) >= pool.update_cooldown,
             ErrorCode::CooldownActive
         );
 
@@ -532,10 +577,21 @@ pub mod solana_ai_lend {
         pool.collateral_ratio_bps = new_collateral_ratio;
         pool.max_borrow_limit = new_max_borrow;
         pool.last_update = now;
+        pool.total_ai_updates += 1;
+
+        // Обновить mood на основе risk_level
+        pool.current_mood = match risk_level {
+            RiskLevel::Low => ProtocolMood::Thriving,
+            RiskLevel::Medium => ProtocolMood::Cautious,
+            RiskLevel::High => ProtocolMood::Defensive,
+            RiskLevel::Critical => ProtocolMood::Emergency,
+        };
 
         // Записать AiDecisionLog
+        // PDA seeds: ["decision_log", pool, total_ai_updates.to_le_bytes()]
         let log = &mut ctx.accounts.decision_log;
         log.pool = ctx.accounts.pool.key();
+        log.update_number = pool.total_ai_updates;
         log.timestamp = now;
         log.old_interest_rate = old_rate;
         log.new_interest_rate = new_interest_rate;
@@ -544,7 +600,9 @@ pub mod solana_ai_lend {
         log.old_max_borrow = old_max_borrow;
         log.new_max_borrow = new_max_borrow;
         log.reasoning_hash = reasoning_hash;
+        log.reasoning_short = reasoning_short;
         log.confidence = confidence;
+        log.risk_level = risk_level;
         log.bump = ctx.bumps.decision_log;
 
         emit!(ParametersUpdatedEvent {
@@ -554,6 +612,8 @@ pub mod solana_ai_lend {
             old_collateral,
             new_collateral: new_collateral_ratio,
             confidence,
+            risk_level,
+            ai_update_count: pool.total_ai_updates,
             timestamp: now,
         });
 
@@ -745,6 +805,11 @@ pub struct Borrow<'info> {
     )]
     pub user_token_account: Account<'info, TokenAccount>,
 
+    /// Pyth SOL/USD price feed (devnet)
+    /// CHECK: validated by constraint matching pool.sol_usd_price_feed
+    #[account(constraint = sol_price_feed.key() == pool.sol_usd_price_feed)]
+    pub sol_price_feed: UncheckedAccount<'info>,
+
     pub owner: Signer<'info>,
     pub token_program: Program<'info, Token>,
 }
@@ -799,7 +864,7 @@ pub struct UpdateParams<'info> {
     /// AI-агент должен подписать TX. Anchor проверяет через has_one.
     pub ai_agent: Signer<'info>,
 
-    /// Лог решения AI — новый аккаунт, PDA с timestamp
+    /// Лог решения AI — PDA с update_count (НЕ Clock — Clock недоступен в seeds)
     #[account(
         init,
         payer = ai_agent,
@@ -807,16 +872,74 @@ pub struct UpdateParams<'info> {
         seeds = [
             b"decision_log",
             pool.key().as_ref(),
-            &Clock::get()?.unix_timestamp.to_le_bytes()
+            &(pool.total_ai_updates + 1).to_le_bytes()  // следующий номер
         ],
         bump
     )]
     pub decision_log: Account<'info, AiDecisionLog>,
 
-    #[account(mut)]
-    pub payer: Signer<'info>,
-
     pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+pub struct DepositCollateral<'info> {
+    #[account(
+        mut,
+        seeds = [b"lending_pool", pool.authority.as_ref()],
+        bump = pool.bump
+    )]
+    pub pool: Account<'info, LendingPool>,
+
+    #[account(
+        mut,
+        seeds = [b"position", pool.key().as_ref(), owner.key().as_ref()],
+        bump = position.bump,
+        has_one = owner
+    )]
+    pub position: Account<'info, UserPosition>,
+
+    #[account(mut)]
+    pub owner: Signer<'info>,
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+pub struct WithdrawCollateral<'info> {
+    #[account(
+        mut,
+        seeds = [b"lending_pool", pool.authority.as_ref()],
+        bump = pool.bump
+    )]
+    pub pool: Account<'info, LendingPool>,
+
+    #[account(
+        mut,
+        seeds = [b"position", pool.key().as_ref(), owner.key().as_ref()],
+        bump = position.bump,
+        has_one = owner
+    )]
+    pub position: Account<'info, UserPosition>,
+
+    #[account(mut)]
+    pub owner: Signer<'info>,
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+pub struct AccrueInterest<'info> {
+    #[account(
+        seeds = [b"lending_pool", pool.authority.as_ref()],
+        bump = pool.bump
+    )]
+    pub pool: Account<'info, LendingPool>,
+
+    #[account(
+        mut,
+        seeds = [b"position", pool.key().as_ref(), position.owner.as_ref()],
+        bump = position.bump
+    )]
+    pub position: Account<'info, UserPosition>,
+    // Любой может вызвать — не требует Signer кроме fee payer
 }
 
 #[derive(Accounts)]
@@ -832,13 +955,18 @@ pub struct Liquidate<'info> {
         mut,
         seeds = [b"position", pool.key().as_ref(), borrower.key().as_ref()],
         bump = borrower_position.bump,
-        has_one = owner @ ErrorCode::InvalidBorrower
+        constraint = borrower_position.owner == borrower.key() @ ErrorCode::InvalidBorrower
     )]
     pub borrower_position: Account<'info, UserPosition>,
 
-    /// CHECK: validated via PDA seeds above
+    /// CHECK: validated by PDA seeds + constraint above
     pub borrower: UncheckedAccount<'info>,
 
+    /// Pyth SOL/USD price feed
+    #[account(constraint = sol_price_feed.key() == pool.sol_usd_price_feed)]
+    pub sol_price_feed: UncheckedAccount<'info>,
+
+    #[account(mut)]
     pub liquidator: Signer<'info>,
     pub token_program: Program<'info, Token>,
     pub system_program: Program<'info, System>,
@@ -856,6 +984,35 @@ pub struct DepositEvent {
 }
 
 #[event]
+pub struct CollateralDepositedEvent {
+    pub user: Pubkey,
+    pub amount_lamports: u64,
+}
+
+#[event]
+pub struct BorrowEvent {
+    pub user: Pubkey,
+    pub amount: u64,
+    pub collateral_sol: u64,
+    pub interest_rate_bps: u16,
+}
+
+#[event]
+pub struct RepayEvent {
+    pub user: Pubkey,
+    pub amount: u64,
+}
+
+#[event]
+pub struct LiquidationEvent {
+    pub borrower: Pubkey,
+    pub liquidator: Pubkey,
+    pub collateral_seized: u64,
+    pub debt_repaid: u64,
+    pub sol_price_usd: u64,
+}
+
+#[event]
 pub struct ParametersUpdatedEvent {
     pub pool: Pubkey,
     pub old_rate: u16,
@@ -863,6 +1020,15 @@ pub struct ParametersUpdatedEvent {
     pub old_collateral: u16,
     pub new_collateral: u16,
     pub confidence: u8,
+    pub risk_level: RiskLevel,
+    pub ai_update_count: u64,
+    pub timestamp: i64,
+}
+
+#[event]
+pub struct EmergencyFreezeEvent {
+    pub authority: Pubkey,
+    pub reason: String,
     pub timestamp: i64,
 }
 
@@ -904,6 +1070,16 @@ pub enum ErrorCode {
     PositionHealthy,
     #[msg("Invalid borrower for liquidation")]
     InvalidBorrower,
+    #[msg("Cannot withdraw collateral with active borrow")]
+    HasActiveBorrow,
+    #[msg("Protocol is frozen by emergency")]
+    ProtocolFrozen,
+    #[msg("Nothing to liquidate: no active borrow")]
+    NothingToLiquidate,
+    #[msg("Reasoning too long (max 256 chars)")]
+    ReasoningTooLong,
+    #[msg("Invalid or stale price from oracle")]
+    InvalidPrice,
 }
 
 fn abs_diff(a: u16, b: u16) -> u16 {
@@ -4037,6 +4213,410 @@ pub struct AiDecisionChallenged {
 ├── Governance: путь к DAO в будущем
 ├── Для жюри: "У нас AI подотчётен пользователям"
 └── Вдохновлено: dispute mechanism из ai_dispute_resolver
+```
+
+---
+
+## 15. Security: ключи, пароли, .env, Docker networking
+
+### 15.1 Принцип: ни одного секрета в git
+
+```
+ПРАВИЛО: Все секреты ТОЛЬКО в .env файлах.
+         .env файлы ТОЛЬКО в .gitignore.
+         В коде и docker-compose — ТОЛЬКО переменные ${VAR_NAME}.
+
+НИКОГДА в git:
+├── API ключи (GEMINI_API_KEY, RPC URLs с ключами)
+├── Keypair JSON файлы (deployer.json, ai-agent.json)
+├── Пароли БД
+├── JWT секреты
+├── Приватные ключи Solana
+└── Любые токены доступа
+```
+
+### 15.2 Генерация сильных ключей/паролей
+
+```bash
+# Все пароли генерируются криптографически, НИКОГДА не "password123"
+
+# Пароль для PostgreSQL (32 символа, hex)
+openssl rand -hex 32
+# → e.g. a3f7c2e9d1b4f8a6c3e7d2b5f9a1c4e8d6b3f7a2e5c8d1b4f6a9c2e7d3b8f5
+
+# JWT secret (64 символа)
+openssl rand -base64 48
+# → e.g. kX9mP2vR7wQ4tY6uN3jK8fL5hG1dS0aE/xCbZmWqJnToRiUpVyAl
+
+# Session secret
+python3 -c "import secrets; print(secrets.token_urlsafe(48))"
+
+# Solana keypair (уже криптографический, но хранить в .env)
+solana-keygen new --outfile /dev/stdout --no-bip39-passphrase | base64
+```
+
+### 15.3 Файлы .env
+
+```bash
+# ============================================
+# ROOT .env (docker-compose уровень)
+# ============================================
+# docker/.env — НЕ коммитить, в .gitignore
+
+# --- Solana ---
+SOLANA_RPC_URL=https://api.devnet.solana.com
+DEPLOYER_KEYPAIR_PATH=/app/keys/deployer.json
+AI_AGENT_KEYPAIR_PATH=/app/keys/ai-agent.json
+PROGRAM_ID=YOUR_PROGRAM_ID_AFTER_DEPLOY
+POOL_AUTHORITY=YOUR_POOL_AUTHORITY_PUBKEY
+
+# --- Gemini AI ---
+GEMINI_API_KEY=AIzaSy_REPLACE_WITH_REAL_KEY
+GEMINI_MODEL=gemini-2.0-flash
+
+# --- PostgreSQL (сильный пароль!) ---
+POSTGRES_USER=solana_ai_lend
+POSTGRES_PASSWORD=a3f7c2e9d1b4f8a6c3e7d2b5f9a1c4e8
+POSTGRES_DB=solana_ai_lend
+DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+
+# --- Backend ---
+JWT_SECRET=kX9mP2vR7wQ4tY6uN3jK8fL5hG1dS0aE_xCbZmWqJnToRiUpVyAl
+CORS_ORIGINS=http://localhost:5173,http://localhost:3000
+BACKEND_PORT=8000
+
+# --- Frontend ---
+VITE_API_URL=http://localhost:8000
+VITE_WS_URL=ws://localhost:8000/ws/updates
+VITE_SOLANA_RPC=https://api.devnet.solana.com
+VITE_PROGRAM_ID=${PROGRAM_ID}
+```
+
+```bash
+# ============================================
+# .env.example (коммитить в git — без реальных значений)
+# ============================================
+
+# --- Solana ---
+SOLANA_RPC_URL=https://api.devnet.solana.com
+DEPLOYER_KEYPAIR_PATH=./keys/deployer.json
+AI_AGENT_KEYPAIR_PATH=./keys/ai-agent.json
+PROGRAM_ID=REPLACE_ME
+POOL_AUTHORITY=REPLACE_ME
+
+# --- Gemini AI ---
+GEMINI_API_KEY=REPLACE_ME
+GEMINI_MODEL=gemini-2.0-flash
+
+# --- PostgreSQL ---
+POSTGRES_USER=solana_ai_lend
+POSTGRES_PASSWORD=GENERATE_WITH_openssl_rand_-hex_32
+POSTGRES_DB=solana_ai_lend
+DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+
+# --- Backend ---
+JWT_SECRET=GENERATE_WITH_openssl_rand_-base64_48
+CORS_ORIGINS=http://localhost:5173
+BACKEND_PORT=8000
+
+# --- Frontend ---
+VITE_API_URL=http://localhost:8000
+VITE_WS_URL=ws://localhost:8000/ws/updates
+VITE_SOLANA_RPC=https://api.devnet.solana.com
+VITE_PROGRAM_ID=REPLACE_ME
+```
+
+### 15.4 Docker Compose — секреты через .env, сервисы на 127.0.0.1
+
+```yaml
+# docker/docker-compose.yml
+version: "3.9"
+
+services:
+  # ========================================
+  # PostgreSQL — ТОЛЬКО внутренняя сеть
+  # 127.0.0.1 = доступен только с хоста, НЕ из интернета
+  # ========================================
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}           # из .env
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}   # из .env (сильный!)
+      POSTGRES_DB: ${POSTGRES_DB}               # из .env
+    ports:
+      - "127.0.0.1:5432:5432"   # ТОЛЬКО localhost, НЕ 0.0.0.0
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - internal
+
+  # ========================================
+  # Redis (кэш + pub/sub для WebSocket)
+  # ТОЛЬКО внутренняя сеть
+  # ========================================
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: >
+      redis-server
+      --requirepass ${REDIS_PASSWORD:-default_change_me}
+      --maxmemory 128mb
+      --maxmemory-policy allkeys-lru
+    ports:
+      - "127.0.0.1:6379:6379"   # ТОЛЬКО localhost
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-default_change_me}", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - internal
+
+  # ========================================
+  # FastAPI Backend
+  # ========================================
+  backend:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-default_change_me}@redis:6379/0
+      - SOLANA_RPC_URL=${SOLANA_RPC_URL}
+      - PROGRAM_ID=${PROGRAM_ID}
+      - POOL_AUTHORITY=${POOL_AUTHORITY}
+      - JWT_SECRET=${JWT_SECRET}
+      - CORS_ORIGINS=${CORS_ORIGINS}
+      - GEMINI_API_KEY=${GEMINI_API_KEY}   # для health check Gemini
+    ports:
+      - "127.0.0.1:8000:8000"   # ТОЛЬКО localhost (nginx проксирует наружу)
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    networks:
+      - internal
+
+  # ========================================
+  # AI Agent (Python async + multiprocessing)
+  # ========================================
+  ai-agent:
+    build:
+      context: ../ai-agent
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      - SOLANA_RPC_URL=${SOLANA_RPC_URL}
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - GEMINI_MODEL=${GEMINI_MODEL}
+      - AI_AGENT_KEYPAIR_PATH=${AI_AGENT_KEYPAIR_PATH}
+      - PROGRAM_ID=${PROGRAM_ID}
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-default_change_me}@redis:6379/0
+    volumes:
+      - ../keys:/app/keys:ro     # keypairs read-only
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - internal
+    # НЕТ ports — AI agent не принимает входящих подключений
+
+  # ========================================
+  # Frontend (React + Vite → production build)
+  # ========================================
+  frontend:
+    build:
+      context: ../frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_API_URL: ${VITE_API_URL}
+        VITE_WS_URL: ${VITE_WS_URL}
+        VITE_SOLANA_RPC: ${VITE_SOLANA_RPC}
+        VITE_PROGRAM_ID: ${VITE_PROGRAM_ID}
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3000:80"     # ТОЛЬКО localhost (nginx проксирует)
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - internal
+
+  # ========================================
+  # Nginx reverse proxy (единственный сервис наружу)
+  # ========================================
+  nginx:
+    image: nginx:alpine
+    restart: unless-stopped
+    ports:
+      - "0.0.0.0:80:80"         # ← единственный порт наружу
+      - "0.0.0.0:443:443"       # ← HTTPS (если есть сертификат)
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - frontend
+      - backend
+    networks:
+      - internal
+
+volumes:
+  pgdata:
+
+networks:
+  internal:
+    driver: bridge
+    # Все сервисы общаются через internal network
+    # Снаружи доступен ТОЛЬКО nginx (80/443)
+```
+
+### 15.5 Networking — кто куда ходит
+
+```
+ИНТЕРНЕТ
+    │
+    ▼ (0.0.0.0:80/443 — единственная точка входа)
+┌───────────┐
+│   Nginx   │ ← reverse proxy
+└─┬─────┬───┘
+  │     │
+  │     │ 127.0.0.1:3000
+  │     ▼
+  │  ┌──────────┐
+  │  │ Frontend  │ ← static files (React build)
+  │  └──────────┘
+  │
+  │ 127.0.0.1:8000
+  ▼
+┌──────────┐
+│ Backend  │ ← FastAPI (REST + WebSocket)
+└─┬────┬───┘
+  │    │
+  │    │ internal:5432
+  │    ▼
+  │  ┌────┐
+  │  │ DB │ ← PostgreSQL (127.0.0.1:5432 с хоста)
+  │  └────┘
+  │
+  │ internal:6379
+  ▼
+┌───────┐
+│ Redis │ ← кэш + pub/sub (127.0.0.1:6379 с хоста)
+└───────┘
+
+┌───────────┐
+│ AI Agent  │ ← БЕЗ портов наружу, только исходящие:
+└─┬─┬─┬─────┘   → DB (internal), → Solana RPC, → Gemini API, → Redis
+  │ │ │
+  │ │ └── Gemini API (HTTPS outbound)
+  │ └──── Solana devnet RPC (HTTPS outbound)
+  └────── CoinGecko / Jupiter / Pyth (HTTPS outbound)
+
+ПРАВИЛА:
+├── Из интернета доступен ТОЛЬКО nginx (80/443)
+├── DB, Redis — 127.0.0.1 (с хоста для отладки) + internal (из контейнеров)
+├── Backend, Frontend — 127.0.0.1 (nginx проксирует)
+├── AI Agent — НЕТ портов, только outbound
+└── Все пароли из .env, НИЧЕГО захардкожено
+```
+
+### 15.6 Nginx конфиг (минимальный)
+
+```nginx
+# docker/nginx.conf
+events { worker_connections 1024; }
+
+http {
+    upstream backend {
+        server backend:8000;
+    }
+    upstream frontend {
+        server frontend:80;
+    }
+
+    server {
+        listen 80;
+        server_name _;
+
+        # Frontend
+        location / {
+            proxy_pass http://frontend;
+        }
+
+        # Backend API
+        location /api/ {
+            proxy_pass http://backend;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+        }
+
+        # WebSocket
+        location /ws/ {
+            proxy_pass http://backend;
+            proxy_http_version 1.1;
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection "upgrade";
+            proxy_set_header Host $host;
+            proxy_read_timeout 86400;
+        }
+    }
+}
+```
+
+### 15.7 .gitignore обновление для секретов
+
+```gitignore
+# Секреты — НИКОГДА не коммитить
+.env
+.env.local
+.env.production
+.env.*.local
+docker/.env
+
+# Keypairs
+keys/
+*.keypair
+*-keypair.json
+deployer.json
+ai-agent.json
+
+# Docker volumes
+pgdata/
+
+# SSL сертификаты
+*.pem
+*.key
+*.crt
+```
+
+### 15.8 Чеклист безопасности перед деплоем
+
+```
+Перед push / deploy проверить:
+
+□ git log --all --diff-filter=A -- '*.env' '*.json' 'keys/' — нет секретов в истории
+□ grep -r "AIzaSy" . --exclude-dir=.git — нет ключей в коде
+□ grep -r "password" docker-compose.yml — только ${POSTGRES_PASSWORD}, не хардкод
+□ docker compose config — проверить что .env подставляется
+□ nmap localhost — открыт только порт 80/443 (nginx)
+□ curl localhost:5432 — Connection refused (БД не торчит наружу)
+□ curl localhost:6379 — Connection refused (Redis не торчит наружу)
+□ curl localhost:8000 — Connection refused (Backend за nginx)
+□ Все пароли ≥ 32 символа (openssl rand -hex 32)
+□ .env.example в git — с REPLACE_ME, без реальных значений
 ```
 
 ### 14.7 Итог: что взяли
