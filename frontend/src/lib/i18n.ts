@@ -69,6 +69,28 @@ const translations = {
 
     // Mood
     frozen: "FROZEN",
+    moodThriving: "Thriving",
+    moodCalm: "Calm",
+    moodCautious: "Cautious",
+    moodDefensive: "Defensive",
+    moodEmergency: "Emergency",
+
+    // Wallet
+    selectWallet: "Select Wallet",
+    connected: "Connected",
+    disconnect: "Disconnect",
+
+    // Risk levels
+    riskLow: "Low",
+    riskMedium: "Medium",
+    riskHigh: "High",
+    riskCritical: "Critical",
+
+    // Status
+    confirmed: "Confirmed",
+    txFailed: "TX Failed",
+    rejected: "Rejected",
+    pending: "Pending",
   },
   ru: {
     dashboard: "Дашборд",
@@ -132,6 +154,25 @@ const translations = {
     noRiskData: "Нет данных о рисках",
 
     frozen: "ЗАМОРОЖЕН",
+    moodThriving: "Процветает",
+    moodCalm: "Спокойно",
+    moodCautious: "Осторожно",
+    moodDefensive: "Защита",
+    moodEmergency: "Экстренно",
+
+    selectWallet: "Выбрать кошелёк",
+    connected: "Подключён",
+    disconnect: "Отключить",
+
+    riskLow: "Низкий",
+    riskMedium: "Средний",
+    riskHigh: "Высокий",
+    riskCritical: "Критический",
+
+    confirmed: "Подтверждено",
+    txFailed: "TX ошибка",
+    rejected: "Отклонено",
+    pending: "Ожидание",
   },
 } as const;
 

@@ -19,6 +19,8 @@ def _row_to_response(row: dict) -> AiDecisionResponse:
         old_collateral=row.get("old_collateral", 0),
         new_collateral=row.get("new_collateral", 0),
         reasoning=row.get("reasoning", ""),
+        reasoning_en=row.get("reasoning_en", row.get("reasoning", "")),
+        reasoning_ru=row.get("reasoning_ru", ""),
         confidence=row.get("confidence", 0),
         risk_level=row.get("risk_level", ""),
         risk_score=row.get("risk_score", 0),

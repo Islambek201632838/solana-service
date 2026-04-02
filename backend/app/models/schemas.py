@@ -50,6 +50,8 @@ class AiDecisionResponse(BaseModel):
     old_collateral: int = 0
     new_collateral: int = 0
     reasoning: str = ""
+    reasoning_en: str = ""
+    reasoning_ru: str = ""
     confidence: int = 0
     risk_level: str = ""
     risk_score: float = 0.0

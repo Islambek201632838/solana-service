@@ -1,4 +1,5 @@
-import { WalletMultiButton } from "@solana/wallet-adapter-react-ui";
+import { useWallet } from "@solana/wallet-adapter-react";
+import { useWalletModal } from "@solana/wallet-adapter-react-ui";
 import { useBreakpoint } from "../../hooks/useMediaQuery";
 import { useLang } from "../../hooks/useLang";
 import type { TranslationKey } from "../../lib/i18n";
@@ -20,6 +21,12 @@ const tabs: { id: string; labelKey: TranslationKey }[] = [
 export default function Navbar({ onMenuToggle, activeTab, onTabChange }: Props) {
   const { isMobile } = useBreakpoint();
   const { lang, setLang, t } = useLang();
+  const { publicKey, disconnect } = useWallet();
+  const { setVisible } = useWalletModal();
+
+  const walletLabel = publicKey
+    ? publicKey.toBase58().slice(0, 4) + "..." + publicKey.toBase58().slice(-4)
+    : t("selectWallet");
 
   return (
     <nav className="sticky top-0 z-50 bg-gray-900/80 backdrop-blur border-b border-gray-800 px-4 py-3">
@@ -65,7 +72,12 @@ export default function Navbar({ onMenuToggle, activeTab, onTabChange }: Props) 
           >
             {lang === "en" ? "EN" : "RU"}
           </button>
-          <WalletMultiButton className="!bg-purple-600 !rounded-lg !h-10 !text-sm" />
+          <button
+            onClick={() => publicKey ? disconnect() : setVisible(true)}
+            className="bg-purple-600 hover:bg-purple-700 text-white rounded-lg h-10 px-4 text-sm transition"
+          >
+            {walletLabel}
+          </button>
         </div>
       </div>
     </nav>

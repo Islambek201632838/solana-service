@@ -3,12 +3,26 @@ import { useLang } from "../hooks/useLang";
 import AiDecisionCard from "../components/dashboard/AiDecisionCard";
 import { useAiDecisions } from "../hooks/useAiDecisions";
 import { useBreakpoint } from "../hooks/useMediaQuery";
+import type { TranslationKey } from "../lib/i18n";
 
-const RISK_FILTERS = ["all", "low", "medium", "high", "critical"] as const;
+const RISK_FILTERS: { value: string; labelKey: TranslationKey }[] = [
+  { value: "all", labelKey: "allRiskLevels" },
+  { value: "low", labelKey: "riskLow" },
+  { value: "medium", labelKey: "riskMedium" },
+  { value: "high", labelKey: "riskHigh" },
+  { value: "critical", labelKey: "riskCritical" },
+];
+
+const riskLabelKeys: Record<string, TranslationKey> = {
+  low: "riskLow",
+  medium: "riskMedium",
+  high: "riskHigh",
+  critical: "riskCritical",
+};
 
 export default function AiDecisions() {
   const [page, setPage] = useState(1);
-  const [riskFilter, setRiskFilter] = useState<string>("all");
+  const [riskFilter, setRiskFilter] = useState("all");
   const { isMobile, isDesktop } = useBreakpoint();
   const { t } = useLang();
 
@@ -27,13 +41,13 @@ export default function AiDecisions() {
         <div className="flex gap-2">
           {RISK_FILTERS.map((f) => (
             <button
-              key={f}
-              onClick={() => { setRiskFilter(f); setPage(1); }}
-              className={`px-4 py-2 rounded-lg text-sm capitalize ${
-                riskFilter === f ? "bg-purple-600 text-white" : "bg-gray-800 text-gray-400 hover:bg-gray-700"
+              key={f.value}
+              onClick={() => { setRiskFilter(f.value); setPage(1); }}
+              className={`px-4 py-2 rounded-lg text-sm ${
+                riskFilter === f.value ? "bg-purple-600 text-white" : "bg-gray-800 text-gray-400 hover:bg-gray-700"
               }`}
             >
-              {f === "all" ? t("allRiskLevels") : f}
+              {t(f.labelKey)}
             </button>
           ))}
         </div>
@@ -44,7 +58,7 @@ export default function AiDecisions() {
           className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-3 text-[16px] text-gray-300"
         >
           {RISK_FILTERS.map((f) => (
-            <option key={f} value={f}>{f === "all" ? t("allRiskLevels") : f}</option>
+            <option key={f.value} value={f.value}>{t(f.labelKey)}</option>
           ))}
         </select>
       )}
@@ -80,7 +94,7 @@ export default function AiDecisions() {
                   <td className={`p-3 font-mono ${d.new_rate > d.old_rate ? "text-green-400" : d.new_rate < d.old_rate ? "text-red-400" : "text-gray-500"}`}>
                     {d.new_rate > d.old_rate ? "+" : ""}{((d.new_rate - d.old_rate) / 100).toFixed(2)}%
                   </td>
-                  <td className="p-3">{d.risk_level}</td>
+                  <td className="p-3">{t(riskLabelKeys[d.risk_level] ?? "riskMedium")}</td>
                   <td className="p-3">{d.confidence}%</td>
                   <td className="p-3">
                     {d.tx_signature ? (

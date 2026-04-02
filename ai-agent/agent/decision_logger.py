@@ -30,6 +30,8 @@ class DecisionLogger:
                     old_max_borrow INTEGER NOT NULL DEFAULT 0,
                     new_max_borrow INTEGER NOT NULL DEFAULT 0,
                     reasoning TEXT NOT NULL DEFAULT '',
+                    reasoning_en TEXT NOT NULL DEFAULT '',
+                    reasoning_ru TEXT NOT NULL DEFAULT '',
                     confidence INTEGER NOT NULL DEFAULT 0,
                     risk_level TEXT NOT NULL DEFAULT 'medium',
                     risk_score REAL NOT NULL DEFAULT 0,
@@ -66,9 +68,10 @@ class DecisionLogger:
             await db.execute(
                 """INSERT INTO decisions
                    (timestamp, old_rate, new_rate, old_collateral, new_collateral,
-                    old_max_borrow, new_max_borrow, reasoning, confidence,
-                    risk_level, risk_score, sol_price, utilization, tx_signature, status)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    old_max_borrow, new_max_borrow, reasoning, reasoning_en, reasoning_ru,
+                    confidence, risk_level, risk_score, sol_price, utilization,
+                    tx_signature, status)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     datetime.now(timezone.utc).isoformat(),
                     old_state.get("interest_rate_bps", 0),
@@ -78,6 +81,8 @@ class DecisionLogger:
                     old_state.get("max_borrow_limit", 0),
                     decision.get("max_borrow_limit", 0),
                     decision.get("reasoning_short", ""),
+                    decision.get("reasoning_en", decision.get("reasoning_short", "")),
+                    decision.get("reasoning_ru", ""),
                     decision.get("confidence", 0),
                     decision.get("risk_level", "medium"),
                     quant_report.get("risk_score", 0),

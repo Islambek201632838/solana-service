@@ -64,13 +64,16 @@ class Orchestrator:
 
         # 1. Fetch data (async)
         print("[CYCLE] Fetching data...")
-        pool_authority = self.settings.pool_authority if hasattr(self.settings, 'pool_authority') and self.settings.pool_authority else ""
-        if not pool_authority:
-            # Derive from config or skip
-            print("[CYCLE] No pool_authority configured, skipping")
-            return
+        pool_address = self.settings.pool_address
+        if not pool_address:
+            # Derive PDA from pool_authority + program_id
+            authority = Pubkey.from_string(self.settings.pool_authority)
+            program = Pubkey.from_string(self.settings.program_id)
+            pool_address, _ = Pubkey.find_program_address([b"lending_pool", bytes(authority)], program)
+            pool_address = str(pool_address)
+            print(f"[CYCLE] Derived pool PDA: {pool_address}")
 
-        ctx = await self.collector.build_context(pool_authority)
+        ctx = await self.collector.build_context(pool_address)
         pool = ctx.get("pool", {})
 
         if "error" in pool:
@@ -81,9 +84,15 @@ class Orchestrator:
         volumes = ctx.get("price_history", {}).get("volumes", [])
         sol_price = ctx["market"].get("sol_price", 0)
 
+        # Fallback: use on-chain price if CoinGecko rate-limited
         if sol_price == 0:
-            print("[CYCLE] No SOL price data, skipping")
-            return
+            onchain_price = pool.get("sol_price_usd", 0)
+            if onchain_price > 0:
+                sol_price = onchain_price / 1_000_000  # stored as micro-USD
+                print(f"[CYCLE] CoinGecko rate-limited, using on-chain price: ${sol_price}")
+            else:
+                print("[CYCLE] No SOL price data, skipping")
+                return
 
         print(f"[CYCLE] SOL=${sol_price:.2f}, util={pool.get('utilization', 0):.2%}")
 
@@ -136,7 +145,7 @@ class Orchestrator:
         print("[CYCLE] Validation PASSED")
 
         # 8. Send TX
-        pool_authority_pubkey = Pubkey.from_string(pool_authority)
+        pool_authority_pubkey = Pubkey.from_string(self.settings.pool_authority)
         update_number = pool.get("total_ai_updates", 0)
         tx_sig = await self.tx_builder.send_update_parameters(
             pool_authority_pubkey, decision, update_number

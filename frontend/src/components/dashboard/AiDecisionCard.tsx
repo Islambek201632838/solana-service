@@ -1,9 +1,21 @@
+import { useLang } from "../../hooks/useLang";
+import type { TranslationKey } from "../../lib/i18n";
+
+const riskLabelKeys: Record<string, TranslationKey> = {
+  low: "riskLow",
+  medium: "riskMedium",
+  high: "riskHigh",
+  critical: "riskCritical",
+};
+
 interface Decision {
   id: number;
   timestamp: string;
   old_rate: number;
   new_rate: number;
   reasoning: string;
+  reasoning_en?: string;
+  reasoning_ru?: string;
   confidence: number;
   risk_level: string;
   tx_signature?: string;
@@ -17,8 +29,14 @@ const riskColors: Record<string, string> = {
 };
 
 export default function AiDecisionCard({ decision }: { decision: Decision }) {
+  const { lang, t } = useLang();
   const rateChange = decision.new_rate - decision.old_rate;
   const arrow = rateChange > 0 ? "+" : "";
+
+  // Show reasoning in selected language
+  const reasoning = lang === "ru"
+    ? (decision.reasoning_ru || decision.reasoning_en || decision.reasoning)
+    : (decision.reasoning_en || decision.reasoning);
 
   return (
     <div className="bg-gray-900 rounded-xl border border-gray-800 p-4">
@@ -27,7 +45,7 @@ export default function AiDecisionCard({ decision }: { decision: Decision }) {
           {new Date(decision.timestamp).toLocaleString()}
         </span>
         <span className={`text-xs font-medium ${riskColors[decision.risk_level] ?? "text-gray-400"}`}>
-          {decision.risk_level}
+          {t(riskLabelKeys[decision.risk_level] ?? "riskMedium")}
         </span>
       </div>
 
@@ -38,10 +56,10 @@ export default function AiDecisionCard({ decision }: { decision: Decision }) {
         <span className={`text-sm ${rateChange >= 0 ? "text-green-400" : "text-red-400"}`}>
           {arrow}{(rateChange / 100).toFixed(2)}%
         </span>
-        <span className="text-xs text-gray-600">confidence: {decision.confidence}%</span>
+        <span className="text-xs text-gray-600">{t("confidence")}: {decision.confidence}%</span>
       </div>
 
-      <p className="text-sm text-gray-400 line-clamp-2">{decision.reasoning}</p>
+      <p className="text-sm text-gray-400 line-clamp-2">{reasoning}</p>
 
       {decision.tx_signature && (
         <a
@@ -50,7 +68,7 @@ export default function AiDecisionCard({ decision }: { decision: Decision }) {
           rel="noopener noreferrer"
           className="text-xs text-purple-400 hover:underline mt-2 block"
         >
-          View TX
+          {t("viewTx")}
         </a>
       )}
     </div>

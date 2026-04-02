@@ -15,7 +15,7 @@ from solders.transaction import Transaction
 from solders.message import Message
 from solders.hash import Hash
 from solana.rpc.async_api import AsyncClient
-from solana.rpc.commitment import Confirmed
+from solana.rpc.commitment import Confirmed, Finalized, Processed
 
 
 RISK_LEVEL_MAP = {"low": 0, "medium": 1, "high": 2, "critical": 3}
@@ -80,26 +80,33 @@ class TxBuilder:
 
         ix = Instruction(self.program_id, ix_data, accounts)
 
-        try:
-            blockhash_resp = await client.get_latest_blockhash(Confirmed)
-            blockhash = blockhash_resp.value.blockhash
+        for attempt in range(3):
+            try:
+                # Fresh blockhash each attempt
+                blockhash_resp = await client.get_latest_blockhash(Finalized)
+                blockhash = blockhash_resp.value.blockhash
 
-            msg = Message.new_with_blockhash([ix], self.keypair.pubkey(), blockhash)
-            tx = Transaction.new_unsigned(msg)
-            tx.sign([self.keypair], blockhash)
+                msg = Message.new_with_blockhash([ix], self.keypair.pubkey(), blockhash)
+                tx = Transaction.new_unsigned(msg)
+                tx.sign([self.keypair], blockhash)
 
-            result = await client.send_transaction(tx)
-            sig = str(result.value)
-            print(f"[TX] Sent: {sig}")
+                result = await client.send_transaction(tx)
+                sig = str(result.value)
+                print(f"[TX] Sent: {sig}")
 
-            # Confirm
-            await client.confirm_transaction(result.value, Confirmed)
-            print(f"[TX] Confirmed: {sig}")
-            return sig
+                await client.confirm_transaction(result.value, Confirmed)
+                print(f"[TX] Confirmed: {sig}")
+                return sig
 
-        except Exception as e:
-            print(f"[ERROR] TX failed: {e}")
-            return None
+            except Exception as e:
+                err = str(e)
+                if "Blockhash not found" in err and attempt < 2:
+                    print(f"[TX] Blockhash stale, retry {attempt + 1}/3...")
+                    import asyncio
+                    await asyncio.sleep(2)
+                    continue
+                print(f"[ERROR] TX failed: {e}")
+                return None
 
     def _encode_update_params(self, decision: dict) -> bytes:
         """Encode UpdateParams struct for Anchor instruction.

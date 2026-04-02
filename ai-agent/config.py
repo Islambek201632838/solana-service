@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     ai_agent_keypair_path: str = "./keys/ai-agent.json"
     program_id: str = ""
     pool_authority: str = ""
+    pool_address: str = ""
 
     # Timings
     ai_cycle_interval: int = 600  # 10 min

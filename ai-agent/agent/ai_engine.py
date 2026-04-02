@@ -82,7 +82,8 @@ class AiEngine:
   "interest_rate_bps": <число>,
   "collateral_ratio_bps": <число>,
   "max_borrow_limit": <число>,
-  "reasoning_short": "<макс 200 символов, объяснение решения на английском>",
+  "reasoning_en": "<макс 200 символов, объяснение на английском>",
+  "reasoning_ru": "<макс 200 символов, объяснение на русском>",
   "confidence": <число 0-100>,
   "risk_level": "<low|medium|high|critical>"
 }}"""
@@ -97,11 +98,17 @@ class AiEngine:
         data = json.loads(cleaned)
 
         # Ensure all required fields exist with correct types
+        # Build reasoning_short for on-chain (EN), keep both for off-chain
+        reasoning_en = str(data.get("reasoning_en", data.get("reasoning_short", "")))[:256]
+        reasoning_ru = str(data.get("reasoning_ru", reasoning_en))[:256]
+
         return {
             "interest_rate_bps": int(data["interest_rate_bps"]),
             "collateral_ratio_bps": int(data["collateral_ratio_bps"]),
             "max_borrow_limit": int(data["max_borrow_limit"]),
-            "reasoning_short": str(data["reasoning_short"])[:256],
+            "reasoning_short": reasoning_en,  # on-chain (English)
+            "reasoning_en": reasoning_en,
+            "reasoning_ru": reasoning_ru,
             "confidence": int(data["confidence"]),
             "risk_level": str(data["risk_level"]),
         }
@@ -113,6 +120,8 @@ class AiEngine:
             "collateral_ratio_bps": 15000,
             "max_borrow_limit": 10_000_000_000,
             "reasoning_short": "Gemini unavailable — holding current parameters",
+            "reasoning_en": "Gemini unavailable — holding current parameters",
+            "reasoning_ru": "Gemini недоступен — параметры не изменены",
             "confidence": 0,
             "risk_level": "medium",
         }
