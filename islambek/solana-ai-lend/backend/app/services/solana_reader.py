@@ -35,6 +35,10 @@ class SolanaReader:
             self._session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10))
         return self._session
 
+    async def close(self):
+        if self._session and not self._session.closed:
+            await self._session.close()
+
     async def _fetch_pool(self) -> dict:
         if not self.pool_authority:
             return {"error": "No pool_authority configured"}
