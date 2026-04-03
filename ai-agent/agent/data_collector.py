@@ -145,6 +145,8 @@ class DataCollector:
             nonlocal offset
             val = raw[offset : offset + 32]
             offset += 32
+            if len(val) != 32:
+                return "invalid"
             from solders.pubkey import Pubkey
             return str(Pubkey.from_bytes(val))
 

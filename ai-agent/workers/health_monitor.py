@@ -6,6 +6,8 @@ Runs as a separate process.
 
 import asyncio
 
+from solders.pubkey import Pubkey
+
 from config import Settings
 from agent.data_collector import DataCollector
 
@@ -25,11 +27,15 @@ class HealthMonitor:
             await asyncio.sleep(self.settings.health_check_interval)
 
     async def check(self):
-        pool_authority = self.settings.pool_authority if hasattr(self.settings, 'pool_authority') and self.settings.pool_authority else ""
-        if not pool_authority:
+        if not self.settings.pool_authority or not self.settings.program_id:
             return
 
-        pool = await self.collector.fetch_pool_state(pool_authority)
+        # Derive pool PDA from authority + program_id
+        authority = Pubkey.from_string(self.settings.pool_authority)
+        program = Pubkey.from_string(self.settings.program_id)
+        pool_pda, _ = Pubkey.find_program_address([b"lending_pool", bytes(authority)], program)
+
+        pool = await self.collector.fetch_pool_state(str(pool_pda))
 
         if "error" in pool:
             print(f"[HEALTH] Pool read error: {pool['error']}")
