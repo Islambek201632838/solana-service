@@ -114,9 +114,20 @@ class Orchestrator:
         ml_signals = await loop.run_in_executor(
             self.executor, self._run_ml, prices, volumes, technical, pool
         )
+        trend = ml_signals.get("trend", {})
         print(f"[CYCLE] ML: risk={ml_signals['risk_score']:.0f}, "
               f"level={ml_signals['risk_level']}, "
-              f"trend={ml_signals['trend']['direction']}")
+              f"trend={trend.get('direction', 'hold')}")
+
+        # ML Metrics
+        if trend.get("feature_importance"):
+            top_features = sorted(trend["feature_importance"].items(), key=lambda x: -x[1])[:3]
+            top_str = ", ".join(f"{k}={v:.2f}" for k, v in top_features)
+            print(f"[CYCLE] Features: {top_str}")
+        if trend.get("accuracy_estimate", 0) > 0:
+            print(f"[CYCLE] Trend accuracy: {trend['accuracy_estimate']:.1f}%, "
+                  f"proba: up={trend.get('probabilities', {}).get('up', 0):.0%} "
+                  f"down={trend.get('probabilities', {}).get('down', 0):.0%}")
 
         # 4. Utilization curve
         utilization = pool.get("utilization", 0)
@@ -215,10 +226,19 @@ class Orchestrator:
     def _run_ml(self, prices: list, volumes: list, technical: dict, pool: dict) -> dict:
         """Run all ML models (synchronous, for thread pool)."""
         anomaly = self.anomaly_detector.detect(prices, volumes)
+
+        # Volume ratio (current vs avg)
+        vol_ratio = 1.0
+        if volumes and len(volumes) > 2:
+            avg_vol = sum(volumes) / len(volumes)
+            vol_ratio = volumes[-1] / avg_vol if avg_vol > 0 else 1.0
+
         trend = self.trend_predictor.predict(
             prices,
+            volumes=volumes,
             rsi=technical.get("rsi", 50),
-            macd=technical.get("macd", {}).get("macd", 0),
+            macd_hist=technical.get("macd", {}).get("histogram", 0),
+            volume_ratio=vol_ratio,
         )
         volatility = self.volatility_model.analyze(prices)
         risk = self.risk_scorer.score(
