@@ -15,6 +15,7 @@ from agent.quant_engine import calc_rsi, calc_macd, calc_bollinger, calc_atr, ca
 from agent.utilization_curve import calc_optimal_rate
 from agent.signal_aggregator import build_report
 from agent.ai_engine import AiEngine
+from agent.sentiment_engine import SentimentEngine
 from agent.validator import validate
 from agent.tx_builder import TxBuilder
 from agent.decision_logger import DecisionLogger
@@ -35,6 +36,7 @@ class Orchestrator:
             settings.ai_agent_keypair_path,
             settings.program_id,
         )
+        self.sentiment = SentimentEngine(self.ai_engine.model)
         self.logger = DecisionLogger()
         self.executor = ThreadPoolExecutor(max_workers=2)
 
@@ -148,6 +150,25 @@ class Orchestrator:
         report["technical"] = technical
         report["ml"] = ml_signals
         report["sol_price_source"] = "coingecko" if ctx["market"].get("sol_price", 0) > 0 else "onchain"
+
+        # 5b. Sentiment analysis (async — runs Gemini separately)
+        try:
+            sentiment = await self.sentiment.analyze()
+            report["sentiment"] = sentiment
+            sev = sentiment.get("overall_severity", "noise")
+            sent_val = sentiment.get("overall_sentiment", 0)
+            summary = sentiment.get("summary_en", "")[:80]
+            print(f"[CYCLE] Sentiment: {sent_val:+.2f} severity={sev} "
+                  f"({sentiment.get('total_headlines', 0)} headlines, "
+                  f"{sentiment.get('noise_count', 0)} noise)")
+            if sentiment.get("serious_events"):
+                for ev in sentiment["serious_events"][:2]:
+                    print(f"[CYCLE]   SERIOUS: {ev.get('title', '')[:60]}")
+            if sentiment.get("should_affect_decision"):
+                print(f"[CYCLE]   → Sentiment WILL affect decision")
+        except Exception as e:
+            print(f"[CYCLE] Sentiment error (skipping): {e}")
+            report["sentiment"] = {"overall_sentiment": 0, "overall_severity": "noise", "should_affect_decision": False}
 
         # 6. Gemini decision (async)
         print("[CYCLE] Asking Gemini...")

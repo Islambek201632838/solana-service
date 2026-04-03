@@ -75,6 +75,14 @@ class AiEngine:
 - Уверенность мат. модели: {report.get('math_confidence', 0)}%
 - Голоса индикаторов: {json.dumps(report.get('votes', {}))}
 
+## Новостной сентимент
+- Общий сентимент: {report.get('sentiment', {}).get('overall_sentiment', 0):+.2f} (от -1 до +1)
+- Серьёзность: {report.get('sentiment', {}).get('overall_severity', 'noise')}
+- Влияет на решение: {'ДА' if report.get('sentiment', {}).get('should_affect_decision', False) else 'НЕТ (шум)'}
+- Сводка EN: {report.get('sentiment', {}).get('summary_en', 'N/A')}
+- Серьёзные события: {json.dumps([e.get('title', '') for e in report.get('sentiment', {}).get('serious_events', [])[:3]], ensure_ascii=False)}
+ВАЖНО: Если severity="noise" — ИГНОРИРУЙ сентимент. Реагируй ТОЛЬКО на "notable"/"serious"/"critical".
+
 ## Правила (СТРОГО соблюдай)
 - interest_rate_bps: от 100 до 2000
 - collateral_ratio_bps: от 12000 до 20000

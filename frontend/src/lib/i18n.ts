@@ -104,6 +104,10 @@ const translations = {
     mlAnomaly: "ANOMALY",
     mlPriceOnchain: "Price on-chain",
     mlFeatures: "Key factors",
+    sentimentNoise: "No significant news",
+    sentimentNotable: "Notable event",
+    sentimentSerious: "Serious event",
+    sentimentCritical: "Critical event",
   },
   ru: {
     dashboard: "Дашборд",
@@ -198,6 +202,10 @@ const translations = {
     mlAnomaly: "АНОМАЛИЯ",
     mlPriceOnchain: "Цена on-chain",
     mlFeatures: "Ключевые факторы",
+    sentimentNoise: "Нет значимых новостей",
+    sentimentNotable: "Важное событие",
+    sentimentSerious: "Серьёзное событие",
+    sentimentCritical: "Критическое событие",
   },
 } as const;
 

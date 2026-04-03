@@ -48,6 +48,10 @@ def _row_to_response(row: dict) -> AiDecisionResponse:
         feature_importance=_parse_feature_importance(row.get("feature_importance", "{}")),
         sol_price_source=row.get("sol_price_source", ""),
         price_updated_onchain=bool(row.get("price_updated_onchain", 0)),
+        sentiment_score=row.get("sentiment_score", 0),
+        sentiment_severity=row.get("sentiment_severity", "noise"),
+        sentiment_summary_en=row.get("sentiment_summary_en", ""),
+        sentiment_summary_ru=row.get("sentiment_summary_ru", ""),
     )
 
 

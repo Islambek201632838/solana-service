@@ -72,6 +72,11 @@ class AiDecisionResponse(BaseModel):
     feature_importance: dict = {}
     sol_price_source: str = ""
     price_updated_onchain: bool = False
+    # Sentiment (step 19)
+    sentiment_score: float = 0.0
+    sentiment_severity: str = "noise"
+    sentiment_summary_en: str = ""
+    sentiment_summary_ru: str = ""
 
 
 class AiDecisionListResponse(BaseModel):

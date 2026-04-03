@@ -50,7 +50,11 @@ class DecisionLogger:
                     anomaly_detected INTEGER NOT NULL DEFAULT 0,
                     feature_importance TEXT NOT NULL DEFAULT '{}',
                     sol_price_source TEXT NOT NULL DEFAULT '',
-                    price_updated_onchain INTEGER NOT NULL DEFAULT 0
+                    price_updated_onchain INTEGER NOT NULL DEFAULT 0,
+                    sentiment_score REAL NOT NULL DEFAULT 0,
+                    sentiment_severity TEXT NOT NULL DEFAULT 'noise',
+                    sentiment_summary_en TEXT NOT NULL DEFAULT '',
+                    sentiment_summary_ru TEXT NOT NULL DEFAULT ''
                 )
             """)
             # Add columns if they don't exist (migration for existing DBs)
@@ -67,6 +71,10 @@ class DecisionLogger:
                 ("feature_importance", "TEXT NOT NULL DEFAULT '{}'"),
                 ("sol_price_source", "TEXT NOT NULL DEFAULT ''"),
                 ("price_updated_onchain", "INTEGER NOT NULL DEFAULT 0"),
+                ("sentiment_score", "REAL NOT NULL DEFAULT 0"),
+                ("sentiment_severity", "TEXT NOT NULL DEFAULT 'noise'"),
+                ("sentiment_summary_en", "TEXT NOT NULL DEFAULT ''"),
+                ("sentiment_summary_ru", "TEXT NOT NULL DEFAULT ''"),
             ]:
                 try:
                     await db.execute(f"ALTER TABLE decisions ADD COLUMN {col} {dtype}")
@@ -115,9 +123,11 @@ class DecisionLogger:
                     rsi, macd_trend, bollinger_position,
                     trend_direction, trend_confidence, trend_proba_up, trend_proba_down,
                     volatility_regime, anomaly_detected, feature_importance,
-                    sol_price_source, price_updated_onchain)
+                    sol_price_source, price_updated_onchain,
+                    sentiment_score, sentiment_severity, sentiment_summary_en, sentiment_summary_ru)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                           ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                           ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                           ?, ?, ?, ?)""",
                 (
                     datetime.now(timezone.utc).isoformat(),
                     old_state.get("interest_rate_bps", 0),
@@ -149,6 +159,11 @@ class DecisionLogger:
                     json.dumps(feature_imp),
                     quant_report.get("sol_price_source", ""),
                     1 if quant_report.get("price_updated_onchain", False) else 0,
+                    # Sentiment
+                    quant_report.get("sentiment", {}).get("overall_sentiment", 0),
+                    quant_report.get("sentiment", {}).get("overall_severity", "noise"),
+                    quant_report.get("sentiment", {}).get("summary_en", ""),
+                    quant_report.get("sentiment", {}).get("summary_ru", ""),
                 ),
             )
             await db.commit()

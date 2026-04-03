@@ -31,6 +31,10 @@ interface Decision {
   feature_importance?: Record<string, number>;
   sol_price_source?: string;
   price_updated_onchain?: boolean;
+  sentiment_score?: number;
+  sentiment_severity?: string;
+  sentiment_summary_en?: string;
+  sentiment_summary_ru?: string;
 }
 
 const riskColors: Record<string, string> = {
@@ -59,6 +63,20 @@ const volLabelKeys: Record<string, TranslationKey> = {
   medium: "mlVolMedium",
   high: "mlVolHigh",
   unknown: "mlVolUnknown",
+};
+
+const sentimentLabelKeys: Record<string, TranslationKey> = {
+  noise: "sentimentNoise",
+  notable: "sentimentNotable",
+  serious: "sentimentSerious",
+  critical: "sentimentCritical",
+};
+
+const sentimentColors: Record<string, string> = {
+  noise: "text-gray-500",
+  notable: "text-blue-400",
+  serious: "text-orange-400",
+  critical: "text-red-400",
 };
 
 export default function AiDecisionCard({ decision, expanded = false }: { decision: Decision; expanded?: boolean }) {
@@ -130,6 +148,16 @@ export default function AiDecisionCard({ decision, expanded = false }: { decisio
               {t("mlPriceOnchain")}
             </span>
           )}
+        </div>
+      )}
+
+      {/* Sentiment Row */}
+      {decision.sentiment_severity && decision.sentiment_severity !== "noise" && (
+        <div className={`text-xs mb-2 px-2 py-1 rounded bg-gray-800 ${sentimentColors[decision.sentiment_severity] ?? "text-gray-500"}`}>
+          {t(sentimentLabelKeys[decision.sentiment_severity] ?? "sentimentNoise")}
+          {decision.sentiment_score ? ` (${decision.sentiment_score > 0 ? "+" : ""}${decision.sentiment_score.toFixed(1)})` : ""}
+          {" — "}
+          {lang === "ru" ? (decision.sentiment_summary_ru || decision.sentiment_summary_en) : decision.sentiment_summary_en}
         </div>
       )}
 
