@@ -64,6 +64,12 @@ class AiEngine:
 - Оптимальная ставка (кривая): {report.get('optimal_rate_bps', 500)} bps
 - Прогноз утилизации: {report.get('predicted_utilization', 0):.2%}
 
+## ML модель (RandomForest)
+- Прогноз тренда: {report.get('ml', {}).get('trend', {}).get('direction', 'hold')}
+- Вероятности: up={report.get('ml', {}).get('trend', {}).get('probabilities', {}).get('up', 0):.0%}, down={report.get('ml', {}).get('trend', {}).get('probabilities', {}).get('down', 0):.0%}, sideways={report.get('ml', {}).get('trend', {}).get('probabilities', {}).get('sideways', 0):.0%}
+- Точность модели на истории: {report.get('ml', {}).get('trend', {}).get('accuracy_estimate', 0):.1f}% (если <40% — не доверяй модели)
+- Ключевые факторы: {json.dumps(dict(list(report.get('ml', {}).get('trend', {}).get('feature_importance', {}).items())[:5]))}
+
 ## Математический сигнал
 - Рекомендация: {report.get('recommended_rate_direction', 'hold')}
 - Уверенность мат. модели: {report.get('math_confidence', 0)}%

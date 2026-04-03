@@ -59,6 +59,19 @@ class AiDecisionResponse(BaseModel):
     utilization: float = 0.0
     tx_signature: str | None = None
     status: str = "pending"
+    # ML metrics (step 17-18)
+    rsi: float = 0.0
+    macd_trend: str = ""
+    bollinger_position: str = ""
+    trend_direction: str = ""
+    trend_confidence: float = 0.0
+    trend_proba_up: float = 0.0
+    trend_proba_down: float = 0.0
+    volatility_regime: str = ""
+    anomaly_detected: bool = False
+    feature_importance: dict = {}
+    sol_price_source: str = ""
+    price_updated_onchain: bool = False
 
 
 class AiDecisionListResponse(BaseModel):

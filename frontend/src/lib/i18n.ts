@@ -91,6 +91,19 @@ const translations = {
     txFailed: "TX Failed",
     rejected: "Rejected",
     pending: "Pending",
+
+    // ML indicators
+    mlTrendUp: "Growth",
+    mlTrendDown: "Decline",
+    mlTrendSideways: "Sideways",
+    mlTrendHold: "Hold",
+    mlVolLow: "Low volatility",
+    mlVolMedium: "Medium volatility",
+    mlVolHigh: "High volatility",
+    mlVolUnknown: "Volatility N/A",
+    mlAnomaly: "ANOMALY",
+    mlPriceOnchain: "Price on-chain",
+    mlFeatures: "Key factors",
   },
   ru: {
     dashboard: "Дашборд",
@@ -173,6 +186,18 @@ const translations = {
     txFailed: "TX ошибка",
     rejected: "Отклонено",
     pending: "Ожидание",
+
+    mlTrendUp: "Рост",
+    mlTrendDown: "Падение",
+    mlTrendSideways: "Боковик",
+    mlTrendHold: "Без изменений",
+    mlVolLow: "Низкая волатильность",
+    mlVolMedium: "Средняя волатильность",
+    mlVolHigh: "Высокая волатильность",
+    mlVolUnknown: "Волатильность Н/Д",
+    mlAnomaly: "АНОМАЛИЯ",
+    mlPriceOnchain: "Цена on-chain",
+    mlFeatures: "Ключевые факторы",
   },
 } as const;
 

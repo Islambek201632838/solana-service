@@ -1,8 +1,8 @@
 """Decision Logger — stores AI decisions in SQLite (WAL mode) for off-chain history."""
 
+import json
 import aiosqlite
 from datetime import datetime, timezone
-
 
 import os
 
@@ -38,9 +38,41 @@ class DecisionLogger:
                     sol_price REAL NOT NULL DEFAULT 0,
                     utilization REAL NOT NULL DEFAULT 0,
                     tx_signature TEXT,
-                    status TEXT NOT NULL DEFAULT 'pending'
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    rsi REAL NOT NULL DEFAULT 0,
+                    macd_trend TEXT NOT NULL DEFAULT '',
+                    bollinger_position TEXT NOT NULL DEFAULT '',
+                    trend_direction TEXT NOT NULL DEFAULT '',
+                    trend_confidence REAL NOT NULL DEFAULT 0,
+                    trend_proba_up REAL NOT NULL DEFAULT 0,
+                    trend_proba_down REAL NOT NULL DEFAULT 0,
+                    volatility_regime TEXT NOT NULL DEFAULT '',
+                    anomaly_detected INTEGER NOT NULL DEFAULT 0,
+                    feature_importance TEXT NOT NULL DEFAULT '{}',
+                    sol_price_source TEXT NOT NULL DEFAULT '',
+                    price_updated_onchain INTEGER NOT NULL DEFAULT 0
                 )
             """)
+            # Add columns if they don't exist (migration for existing DBs)
+            for col, dtype in [
+                ("rsi", "REAL NOT NULL DEFAULT 0"),
+                ("macd_trend", "TEXT NOT NULL DEFAULT ''"),
+                ("bollinger_position", "TEXT NOT NULL DEFAULT ''"),
+                ("trend_direction", "TEXT NOT NULL DEFAULT ''"),
+                ("trend_confidence", "REAL NOT NULL DEFAULT 0"),
+                ("trend_proba_up", "REAL NOT NULL DEFAULT 0"),
+                ("trend_proba_down", "REAL NOT NULL DEFAULT 0"),
+                ("volatility_regime", "TEXT NOT NULL DEFAULT ''"),
+                ("anomaly_detected", "INTEGER NOT NULL DEFAULT 0"),
+                ("feature_importance", "TEXT NOT NULL DEFAULT '{}'"),
+                ("sol_price_source", "TEXT NOT NULL DEFAULT ''"),
+                ("price_updated_onchain", "INTEGER NOT NULL DEFAULT 0"),
+            ]:
+                try:
+                    await db.execute(f"ALTER TABLE decisions ADD COLUMN {col} {dtype}")
+                except Exception:
+                    pass  # column already exists
+
             await db.execute(
                 "CREATE INDEX IF NOT EXISTS idx_decisions_risk ON decisions(risk_level)"
             )
@@ -62,6 +94,15 @@ class DecisionLogger:
         tx_signature: str | None,
         status: str = "sent",
     ):
+        # Extract ML metrics from quant_report
+        technical = quant_report.get("technical", {})
+        ml = quant_report.get("ml", {})
+        trend = ml.get("trend", {})
+        anomaly = ml.get("anomaly", {})
+        volatility = ml.get("volatility", {})
+        probabilities = trend.get("probabilities", {})
+        feature_imp = trend.get("feature_importance", {})
+
         db = await self._connect()
         try:
             await db.execute("BEGIN IMMEDIATE")
@@ -70,8 +111,13 @@ class DecisionLogger:
                    (timestamp, old_rate, new_rate, old_collateral, new_collateral,
                     old_max_borrow, new_max_borrow, reasoning, reasoning_en, reasoning_ru,
                     confidence, risk_level, risk_score, sol_price, utilization,
-                    tx_signature, status)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    tx_signature, status,
+                    rsi, macd_trend, bollinger_position,
+                    trend_direction, trend_confidence, trend_proba_up, trend_proba_down,
+                    volatility_regime, anomaly_detected, feature_importance,
+                    sol_price_source, price_updated_onchain)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                           ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     datetime.now(timezone.utc).isoformat(),
                     old_state.get("interest_rate_bps", 0),
@@ -90,6 +136,19 @@ class DecisionLogger:
                     quant_report.get("utilization", 0),
                     tx_signature,
                     status,
+                    # ML metrics
+                    technical.get("rsi", 0),
+                    technical.get("macd", {}).get("trend", ""),
+                    technical.get("bollinger", {}).get("position", ""),
+                    trend.get("direction", ""),
+                    trend.get("confidence", 0),
+                    probabilities.get("up", 0),
+                    probabilities.get("down", 0),
+                    volatility.get("regime", ""),
+                    1 if anomaly.get("is_anomaly", False) else 0,
+                    json.dumps(feature_imp),
+                    quant_report.get("sol_price_source", ""),
+                    1 if quant_report.get("price_updated_onchain", False) else 0,
                 ),
             )
             await db.commit()

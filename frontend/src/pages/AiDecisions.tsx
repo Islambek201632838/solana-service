@@ -83,6 +83,7 @@ export default function AiDecisions() {
                 <th className="p-3">{t("change")}</th>
                 <th className="p-3">{t("risk")}</th>
                 <th className="p-3">{t("confidence")}</th>
+                <th className="p-3">ML</th>
                 <th className="p-3">{t("tx")}</th>
               </tr>
             </thead>
@@ -96,6 +97,20 @@ export default function AiDecisions() {
                   </td>
                   <td className="p-3">{t(riskLabelKeys[d.risk_level] ?? "riskMedium")}</td>
                   <td className="p-3">{d.confidence}%</td>
+                  <td className="p-3">
+                    <div className="flex flex-wrap gap-1">
+                      {d.rsi > 0 && <span className="text-xs px-1 rounded bg-gray-800">RSI {d.rsi?.toFixed(0)}</span>}
+                      {d.trend_direction && (
+                        <span className={`text-xs px-1 rounded bg-gray-800 ${
+                          d.trend_direction === "up" ? "text-green-400" : d.trend_direction === "down" ? "text-red-400" : ""
+                        }`}>
+                          {d.trend_direction === "up" ? "\u2191" : d.trend_direction === "down" ? "\u2193" : "\u2194"}{" "}
+                          {d.trend_proba_up > 0 ? `${(d.trend_proba_up * 100).toFixed(0)}%` : ""}
+                        </span>
+                      )}
+                      {d.anomaly_detected && <span className="text-xs px-1 rounded bg-red-500/20 text-red-400">!</span>}
+                    </div>
+                  </td>
                   <td className="p-3">
                     {d.tx_signature ? (
                       <a href={`https://solscan.io/tx/${d.tx_signature}?cluster=devnet`} target="_blank" rel="noopener noreferrer" className="text-purple-400 hover:underline">
@@ -111,7 +126,7 @@ export default function AiDecisions() {
       ) : (
         <div className="space-y-3">
           {data.items.map((d: any) => (
-            <AiDecisionCard key={d.id} decision={d} />
+            <AiDecisionCard key={d.id} decision={d} expanded />
           ))}
         </div>
       )}

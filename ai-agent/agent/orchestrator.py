@@ -144,6 +144,10 @@ class Orchestrator:
         market_data = ctx["market"]
         market_data["sol_price"] = sol_price
         report = build_report(market_data, pool, technical, ml_signals, util_rec)
+        # Attach raw data for decision_logger
+        report["technical"] = technical
+        report["ml"] = ml_signals
+        report["sol_price_source"] = "coingecko" if ctx["market"].get("sol_price", 0) > 0 else "onchain"
 
         # 6. Gemini decision (async)
         print("[CYCLE] Asking Gemini...")
@@ -188,6 +192,7 @@ class Orchestrator:
             )
             if price_tx:
                 print(f"[CYCLE] SOL price updated on-chain: ${sol_price:.2f}")
+                report["price_updated_onchain"] = True
 
         # 9b. AI Emergency Freeze if risk critical
         risk_score = ml_signals.get("risk_score", 0)

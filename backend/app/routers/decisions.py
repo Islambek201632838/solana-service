@@ -1,5 +1,6 @@
 """Decisions Router — AI decision history endpoints."""
 
+import json
 from fastapi import APIRouter, HTTPException, Query
 
 from app.models.schemas import AiDecisionResponse, AiDecisionListResponse
@@ -8,6 +9,13 @@ from app.services.decision_service import DecisionService
 router = APIRouter(prefix="/api/decisions", tags=["AI Decisions"])
 
 service = DecisionService()
+
+
+def _parse_feature_importance(raw: str) -> dict:
+    try:
+        return json.loads(raw) if raw else {}
+    except (json.JSONDecodeError, TypeError):
+        return {}
 
 
 def _row_to_response(row: dict) -> AiDecisionResponse:
@@ -28,6 +36,18 @@ def _row_to_response(row: dict) -> AiDecisionResponse:
         utilization=row.get("utilization", 0),
         tx_signature=row.get("tx_signature"),
         status=row.get("status", "pending"),
+        rsi=row.get("rsi", 0),
+        macd_trend=row.get("macd_trend", ""),
+        bollinger_position=row.get("bollinger_position", ""),
+        trend_direction=row.get("trend_direction", ""),
+        trend_confidence=row.get("trend_confidence", 0),
+        trend_proba_up=row.get("trend_proba_up", 0),
+        trend_proba_down=row.get("trend_proba_down", 0),
+        volatility_regime=row.get("volatility_regime", ""),
+        anomaly_detected=bool(row.get("anomaly_detected", 0)),
+        feature_importance=_parse_feature_importance(row.get("feature_importance", "{}")),
+        sol_price_source=row.get("sol_price_source", ""),
+        price_updated_onchain=bool(row.get("price_updated_onchain", 0)),
     )
 
 
