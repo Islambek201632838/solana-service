@@ -1,0 +1,404 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SolanaAI Lend — Pitch Deck</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;900&display=swap');
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: 'Inter', sans-serif; background: #0a0a1a; color: #e5e7eb; }
+
+  .slide {
+    width: 1280px; height: 720px;
+    padding: 60px 80px;
+    page-break-after: always;
+    position: relative;
+    overflow: hidden;
+    background: linear-gradient(135deg, #0f0f2e 0%, #0a0a1a 50%, #1a0a2e 100%);
+  }
+  .slide::before {
+    content: '';
+    position: absolute; top: 0; left: 0; right: 0; height: 3px;
+    background: linear-gradient(90deg, #a855f7, #06b6d4, #a855f7);
+  }
+
+  h1 { font-size: 48px; font-weight: 900; margin-bottom: 16px; }
+  h2 { font-size: 36px; font-weight: 700; margin-bottom: 20px; }
+  h3 { font-size: 24px; font-weight: 600; margin-bottom: 12px; color: #a855f7; }
+  p, li { font-size: 18px; line-height: 1.6; color: #9ca3af; }
+  .accent { color: #a855f7; }
+  .cyan { color: #06b6d4; }
+  .green { color: #22c55e; }
+  .red { color: #ef4444; }
+  .orange { color: #f59e0b; }
+  .dim { color: #6b7280; font-size: 14px; }
+  .bold { font-weight: 700; color: #f3f4f6; }
+
+  .gradient-text {
+    background: linear-gradient(135deg, #a855f7, #06b6d4);
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  }
+
+  .tag {
+    display: inline-block; padding: 4px 12px; border-radius: 20px;
+    font-size: 13px; font-weight: 600; margin: 3px;
+  }
+  .tag-purple { background: rgba(168,85,247,0.15); color: #a855f7; border: 1px solid rgba(168,85,247,0.3); }
+  .tag-cyan { background: rgba(6,182,212,0.15); color: #06b6d4; border: 1px solid rgba(6,182,212,0.3); }
+  .tag-green { background: rgba(34,197,94,0.15); color: #22c55e; border: 1px solid rgba(34,197,94,0.3); }
+  .tag-red { background: rgba(239,68,68,0.15); color: #ef4444; border: 1px solid rgba(239,68,68,0.3); }
+  .tag-orange { background: rgba(245,158,11,0.15); color: #f59e0b; border: 1px solid rgba(245,158,11,0.3); }
+
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 30px; }
+  .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 24px; }
+  .grid-4 { display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 20px; }
+
+  .card {
+    background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 16px; padding: 24px;
+  }
+  .card h3 { margin-bottom: 8px; }
+
+  .pipeline {
+    display: flex; align-items: center; gap: 8px;
+    background: rgba(255,255,255,0.03); border-radius: 12px; padding: 16px 24px;
+    margin: 20px 0;
+  }
+  .pipeline .step {
+    background: rgba(168,85,247,0.1); border: 1px solid rgba(168,85,247,0.2);
+    border-radius: 8px; padding: 8px 16px; font-size: 14px; font-weight: 600; color: #c084fc;
+    white-space: nowrap;
+  }
+  .pipeline .arrow { color: #4b5563; font-size: 20px; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 16px; }
+  th { text-align: left; padding: 10px 16px; color: #a855f7; border-bottom: 1px solid rgba(168,85,247,0.2); font-weight: 600; }
+  td { padding: 10px 16px; border-bottom: 1px solid rgba(255,255,255,0.05); }
+
+  .footer {
+    position: absolute; bottom: 20px; left: 80px; right: 80px;
+    display: flex; justify-content: space-between;
+    font-size: 13px; color: #4b5563;
+  }
+
+  .big-number { font-size: 48px; font-weight: 900; }
+  .stat-label { font-size: 14px; color: #6b7280; margin-top: 4px; }
+
+  ul { list-style: none; }
+  ul li::before { content: "→ "; color: #a855f7; font-weight: bold; }
+
+  .vs-table td:first-child { color: #ef4444; }
+  .vs-table td:last-child { color: #22c55e; }
+
+  @media print {
+    .slide { page-break-after: always; }
+    body { background: #0a0a1a; }
+  }
+</style>
+</head>
+<body>
+
+<!-- SLIDE 1: Title -->
+<div class="slide" style="display:flex; flex-direction:column; justify-content:center; align-items:center; text-align:center;">
+  <div class="dim" style="margin-bottom:20px;">SOLANA DEVNET / AI-POWERED DEFI</div>
+  <h1 class="gradient-text" style="font-size:64px; margin-bottom:24px;">SolanaAI Lend</h1>
+  <p style="font-size:22px; color:#9ca3af; max-width:700px;">
+    AI-агент автономно управляет лендинг-протоколом в реальном времени.<br>
+    Смарт-контракт гарантирует безопасность.
+  </p>
+  <div style="margin-top:40px; display:flex; gap:12px;">
+    <span class="tag tag-purple">Gemini AI</span>
+    <span class="tag tag-cyan">Math + ML</span>
+    <span class="tag tag-green">Guard Rails</span>
+    <span class="tag tag-orange">Sentiment</span>
+  </div>
+  <div class="footer"><span>National Solana Hackathon by Decentrathon 2026</span><span>github.com/Islambek201632838/solana-service</span></div>
+</div>
+
+<!-- SLIDE 2: Problem -->
+<div class="slide">
+  <h2>Проблема: <span class="red">DeFi лендинг сломан</span></h2>
+  <div class="grid-3" style="margin-top:30px;">
+    <div class="card">
+      <h3 class="red">Статичные формулы</h3>
+      <p>Aave/Compound используют фиксированные кривые — не реагируют на рынок</p>
+    </div>
+    <div class="card">
+      <h3 class="red">Медленное управление</h3>
+      <p>Параметры меняются через голосование DAO — дни и недели задержки</p>
+    </div>
+    <div class="card">
+      <h3 class="red">Нет адаптации</h3>
+      <p>Протоколы не реагируют на резкие движения рынка в реальном времени</p>
+    </div>
+  </div>
+  <div class="footer"><span>SolanaAI Lend</span><span>2 / 11</span></div>
+</div>
+
+<!-- SLIDE 3: Solution -->
+<div class="slide">
+  <h2>Решение: <span class="gradient-text">AI считает, не угадывает</span></h2>
+  <div class="pipeline">
+    <div class="step">Данные</div><div class="arrow">→</div>
+    <div class="step">RSI · MACD</div><div class="arrow">→</div>
+    <div class="step">RandomForest</div><div class="arrow">→</div>
+    <div class="step">Sentiment</div><div class="arrow">→</div>
+    <div class="step">Gemini AI</div><div class="arrow">→</div>
+    <div class="step">Validator</div><div class="arrow">→</div>
+    <div class="step" style="background:rgba(34,197,94,0.1); border-color:rgba(34,197,94,0.2); color:#22c55e;">On-chain TX</div>
+  </div>
+  <div class="grid-2" style="margin-top:20px;">
+    <div class="card">
+      <h3>Gemini — интерпретатор, не решатель</h3>
+      <p>Все числа рассчитывает математика. Gemini только выбирает из диапазона и объясняет логику.</p>
+    </div>
+    <div class="card">
+      <h3>AI действует, не советует</h3>
+      <p>AI отправляет реальные транзакции в Solana — update_parameters, set_sol_price, liquidate, emergency_freeze.</p>
+    </div>
+  </div>
+  <div class="footer"><span>SolanaAI Lend</span><span>3 / 11</span></div>
+</div>
+
+<!-- SLIDE 4: AI Decision -->
+<div class="slide">
+  <h2>AI Decision — <span class="accent">что внутри</span></h2>
+  <div class="grid-2" style="margin-top:20px;">
+    <div>
+      <h3>Технические индикаторы</h3>
+      <table>
+        <tr><td class="bold">RSI</td><td>Перекупленность (0-100)</td></tr>
+        <tr><td class="bold">MACD</td><td>Тренд: bullish / bearish</td></tr>
+        <tr><td class="bold">Bollinger</td><td>Цена в норме или за пределами</td></tr>
+        <tr><td class="bold">ATR</td><td>Волатильность</td></tr>
+        <tr><td class="bold">EMA</td><td>Краткосрочный тренд</td></tr>
+      </table>
+    </div>
+    <div>
+      <h3>ML модели</h3>
+      <table>
+        <tr><td class="bold">RandomForest</td><td>up 31% / down 35% / sideways 34%</td></tr>
+        <tr><td class="bold">IsolationForest</td><td>Детекция аномалий</td></tr>
+        <tr><td class="bold">EWMA</td><td>Прогноз волатильности</td></tr>
+        <tr><td class="bold">Risk Scorer</td><td>Композит 0-100</td></tr>
+        <tr><td class="bold">Feature Importance</td><td>Какие факторы важнее</td></tr>
+      </table>
+    </div>
+  </div>
+  <div class="footer"><span>SolanaAI Lend</span><span>4 / 11</span></div>
+</div>
+
+<!-- SLIDE 5: Sentiment -->
+<div class="slide">
+  <h2>Sentiment — <span class="cyan">фильтр шума</span></h2>
+  <p style="margin-bottom:20px; font-size:20px;">AI анализирует новости, но отличает <span class="bold">шум</span> от <span class="bold">серьёзных событий</span></p>
+  <div class="grid-2" style="margin-top:20px;">
+    <div class="card" style="border-color: rgba(239,68,68,0.2);">
+      <h3 class="red">ШУМ → игнорируется</h3>
+      <ul>
+        <li>Твиты Маска / Трампа</li>
+        <li>Мемы, хайп, "to the moon"</li>
+        <li>Мнения без фактов</li>
+        <li>Колебания рынка ±5%</li>
+      </ul>
+      <div style="margin-top:12px;"><span class="tag tag-red">severity: noise</span></div>
+    </div>
+    <div class="card" style="border-color: rgba(34,197,94,0.2);">
+      <h3 class="green">СЕРЬЁЗНОЕ → влияет</h3>
+      <ul>
+        <li><span class="tag tag-cyan">notable</span> Партнёрства, листинги</li>
+        <li><span class="tag tag-orange">serious</span> SEC, санкции, хаки</li>
+        <li><span class="tag tag-red">critical</span> Война, крах биржи, баг сети</li>
+      </ul>
+      <div style="margin-top:12px;">
+        <p class="dim">Источники: CryptoPanic + CoinGecko + Gemini NLP</p>
+      </div>
+    </div>
+  </div>
+  <div class="footer"><span>SolanaAI Lend</span><span>5 / 11</span></div>
+</div>
+
+<!-- SLIDE 6: Guard Rails -->
+<div class="slide">
+  <h2>Guard Rails — <span class="green">4 уровня защиты</span></h2>
+  <div class="grid-4" style="margin-top:30px;">
+    <div class="card" style="text-align:center;">
+      <div class="big-number accent">1</div>
+      <h3>Промпт</h3>
+      <p>Gemini получает жёсткие рамки и инструкцию "noise → игнорируй"</p>
+    </div>
+    <div class="card" style="text-align:center;">
+      <div class="big-number accent">2</div>
+      <h3>Validator</h3>
+      <p>Python: 11 проверок ДО отправки TX. confidence &lt; 50 → reject</p>
+    </div>
+    <div class="card" style="text-align:center;">
+      <div class="big-number accent">3</div>
+      <h3>Контракт</h3>
+      <p>Solana: has_one, cooldown 10 мин, ставка [1-20%], залог [120-200%]</p>
+    </div>
+    <div class="card" style="text-align:center;">
+      <div class="big-number accent">4</div>
+      <h3>Emergency</h3>
+      <p>AI freeze при risk&gt;90. Authority unfreeze. Withdraw всегда работает</p>
+    </div>
+  </div>
+  <p style="text-align:center; margin-top:30px; font-size:20px;">
+    <span class="bold">AI может ошибиться. Контракт не позволит.</span>
+  </p>
+  <div class="footer"><span>SolanaAI Lend</span><span>6 / 11</span></div>
+</div>
+
+<!-- SLIDE 7: Active Actions -->
+<div class="slide">
+  <h2>AI Active Actions — <span class="accent">не только параметры</span></h2>
+  <p style="margin-bottom:24px; font-size:20px;">AI не просто "крутит ручки" — он <span class="bold">управляет протоколом</span></p>
+  <table style="margin-top:20px;">
+    <thead>
+      <tr><th>Действие</th><th>Когда</th><th>TX on-chain</th></tr>
+    </thead>
+    <tbody>
+      <tr><td class="bold">update_parameters</td><td>Каждые 11 мин</td><td>Меняет ставку, залог, лимит</td></tr>
+      <tr><td class="bold">set_sol_price</td><td>Каждый цикл</td><td class="cyan">AI обновляет цену SOL on-chain</td></tr>
+      <tr><td class="bold">liquidate</td><td>Позиция undercollateralized</td><td class="orange">AI ликвидирует позиции</td></tr>
+      <tr><td class="bold">ai_emergency_freeze</td><td>risk &gt; 90 или аномалия</td><td class="red">AI замораживает протокол</td></tr>
+    </tbody>
+  </table>
+  <div class="footer"><span>SolanaAI Lend</span><span>7 / 11</span></div>
+</div>
+
+<!-- SLIDE 8: Architecture -->
+<div class="slide">
+  <h2>Архитектура</h2>
+  <div class="grid-2" style="margin-top:20px;">
+    <div>
+      <div class="card" style="margin-bottom:16px;">
+        <h3 class="accent">Smart Contract</h3>
+        <p>Anchor/Rust · 14 инструкций · PDA · Events · Guard Rails</p>
+      </div>
+      <div class="card" style="margin-bottom:16px;">
+        <h3 class="cyan">AI Agent</h3>
+        <p>Python Async · 3 процесса · Gemini · RandomForest · Sentiment</p>
+      </div>
+      <div class="card" style="margin-bottom:16px;">
+        <h3 class="green">Backend</h3>
+        <p>FastAPI · WebSocket · SQLite WAL · Async Solana Reader</p>
+      </div>
+      <div class="card">
+        <h3 class="orange">Frontend</h3>
+        <p>React + Vite · Tailwind · Adaptive · EN/RU · Phantom Wallet</p>
+      </div>
+    </div>
+    <div>
+      <div class="card" style="height:100%; display:flex; flex-direction:column; justify-content:center; gap:16px;">
+        <div class="grid-2" style="gap:16px;">
+          <div style="text-align:center;">
+            <div class="big-number accent">14</div>
+            <div class="stat-label">инструкций контракта</div>
+          </div>
+          <div style="text-align:center;">
+            <div class="big-number cyan">5</div>
+            <div class="stat-label">ML моделей</div>
+          </div>
+          <div style="text-align:center;">
+            <div class="big-number green">6</div>
+            <div class="stat-label">тех. индикаторов</div>
+          </div>
+          <div style="text-align:center;">
+            <div class="big-number orange">2</div>
+            <div class="stat-label">языка (EN/RU)</div>
+          </div>
+        </div>
+        <div style="text-align:center; margin-top:16px;">
+          <span class="tag tag-purple">Docker Compose</span>
+          <span class="tag tag-cyan">Nginx</span>
+          <span class="tag tag-green">127.0.0.1 internal</span>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="footer"><span>SolanaAI Lend</span><span>8 / 11</span></div>
+</div>
+
+<!-- SLIDE 9: Comparison -->
+<div class="slide">
+  <h2>Почему мы лучше</h2>
+  <table class="vs-table" style="margin-top:30px; font-size:18px;">
+    <thead>
+      <tr><th style="width:50%;">Типичный подход</th><th>SolanaAI Lend</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Данные → LLM → "мне кажется..."</td><td>Данные → Math → ML → Gemini интерпретирует</td></tr>
+      <tr><td>LLM галлюцинирует числа</td><td>Все числа из формул, Gemini только выбирает</td></tr>
+      <tr><td>Нет мат. обоснования</td><td>RSI + MACD + Bollinger + ATR + RandomForest</td></tr>
+      <tr><td>Нет фильтрации новостей</td><td>Sentiment: noise → игнор, serious → реакция</td></tr>
+      <tr><td>AI советует, человек действует</td><td>AI действует on-chain автономно</td></tr>
+      <tr><td>Нет guard rails</td><td>4 уровня: промпт → validator → контракт → emergency</td></tr>
+      <tr><td>Один язык</td><td>EN + RU (UI, reasoning, sentiment)</td></tr>
+    </tbody>
+  </table>
+  <div class="footer"><span>SolanaAI Lend</span><span>9 / 11</span></div>
+</div>
+
+<!-- SLIDE 10: Demo -->
+<div class="slide">
+  <h2>Live Demo — <span class="green">Solana Devnet</span></h2>
+  <div class="grid-3" style="margin-top:30px;">
+    <div class="card" style="text-align:center;">
+      <div class="big-number green">01</div>
+      <h3>Нормальная работа</h3>
+      <p>AI анализирует → Math + ML → Gemini → TX confirmed → дашборд обновлён</p>
+    </div>
+    <div class="card" style="text-align:center;">
+      <div class="big-number orange">02</div>
+      <h3>Guard Rails</h3>
+      <p>AI ставит 50% → контракт: "RateTooHigh" → TX rejected. Безопасность.</p>
+    </div>
+    <div class="card" style="text-align:center;">
+      <div class="big-number red">03</div>
+      <h3>Emergency</h3>
+      <p>Risk > 90 → AI freeze → протокол заморожен → authority unfreeze</p>
+    </div>
+  </div>
+  <p style="text-align:center; margin-top:30px; color:#6b7280;">
+    Все транзакции видны в Solana Explorer (devnet)
+  </p>
+  <div class="footer"><span>SolanaAI Lend</span><span>10 / 11</span></div>
+</div>
+
+<!-- SLIDE 11: Final -->
+<div class="slide" style="display:flex; flex-direction:column; justify-content:center; align-items:center; text-align:center;">
+  <h1 class="gradient-text" style="font-size:56px;">SolanaAI Lend</h1>
+  <p style="font-size:24px; margin:20px 0 30px; color:#9ca3af;">
+    AI думает. Контракт контролирует.<br>
+    Не "поверь AI" — а <span class="bold">"проверь on-chain"</span>.
+  </p>
+  <div style="display:flex; gap:40px; margin:20px 0;">
+    <div style="text-align:center;">
+      <span class="tag tag-purple" style="font-size:16px; padding:8px 20px;">Math + ML</span>
+      <p class="dim" style="margin-top:8px;">нет галлюцинаций</p>
+    </div>
+    <div style="text-align:center;">
+      <span class="tag tag-green" style="font-size:16px; padding:8px 20px;">Guard Rails</span>
+      <p class="dim" style="margin-top:8px;">контракт &gt; AI</p>
+    </div>
+    <div style="text-align:center;">
+      <span class="tag tag-cyan" style="font-size:16px; padding:8px 20px;">Sentiment</span>
+      <p class="dim" style="margin-top:8px;">шум ≠ события</p>
+    </div>
+    <div style="text-align:center;">
+      <span class="tag tag-orange" style="font-size:16px; padding:8px 20px;">Active AI</span>
+      <p class="dim" style="margin-top:8px;">не советует — действует</p>
+    </div>
+  </div>
+  <div style="margin-top:30px;">
+    <p class="dim">Solana Devnet · Gemini 2.0 · Anchor/Rust · React · Open Source</p>
+    <p style="margin-top:12px; font-size:18px;"><span class="accent">github.com/Islambek201632838/solana-service</span></p>
+  </div>
+  <div class="footer"><span>National Solana Hackathon by Decentrathon 2026</span><span>11 / 11</span></div>
+</div>
+
+</body>
+</html>
