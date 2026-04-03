@@ -69,10 +69,18 @@ pub mod solana_ai_lend {
         Ok(())
     }
 
-    /// Set SOL/USD price (authority only). In production, use Pyth oracle.
+    /// Set SOL/USD price (authority or AI agent). In production, use Pyth oracle.
     pub fn set_sol_price(ctx: Context<SetSolPrice>, price_usd: u64) -> Result<()> {
         require!(price_usd > 0, LendError::InvalidPrice);
         ctx.accounts.pool.sol_price_usd = price_usd;
+
+        emit!(SolPriceUpdatedEvent {
+            pool: ctx.accounts.pool.key(),
+            price_usd,
+            updater: ctx.accounts.signer.key(),
+            timestamp: Clock::get()?.unix_timestamp,
+        });
+
         Ok(())
     }
 
@@ -166,6 +174,22 @@ pub mod solana_ai_lend {
             confidence: params.confidence,
             mood: pool.current_mood,
             update_number,
+            timestamp: now,
+        });
+
+        Ok(())
+    }
+
+    /// AI emergency freeze — AI agent can freeze if anomaly detected.
+    pub fn ai_emergency_freeze(ctx: Context<AiEmergencyFreeze>) -> Result<()> {
+        let pool = &mut ctx.accounts.pool;
+        pool.is_frozen = true;
+        pool.current_mood = ProtocolMood::Emergency;
+
+        let now = Clock::get()?.unix_timestamp;
+        emit!(EmergencyFreezeEvent {
+            pool: pool.key(),
+            authority: ctx.accounts.ai_agent.key(),
             timestamp: now,
         });
 
@@ -814,11 +838,12 @@ pub struct SetSolPrice<'info> {
         mut,
         seeds = [b"lending_pool", pool.authority.as_ref()],
         bump = pool.bump,
-        has_one = authority,
+        constraint = signer.key() == pool.authority || signer.key() == pool.ai_agent @ LendError::Unauthorized,
     )]
     pub pool: Account<'info, LendingPool>,
 
-    pub authority: Signer<'info>,
+    /// Signer — either authority or AI agent can update price
+    pub signer: Signer<'info>,
 }
 
 #[derive(Accounts)]
@@ -857,6 +882,19 @@ pub struct EmergencyFreeze<'info> {
     pub pool: Account<'info, LendingPool>,
 
     pub authority: Signer<'info>,
+}
+
+#[derive(Accounts)]
+pub struct AiEmergencyFreeze<'info> {
+    #[account(
+        mut,
+        seeds = [b"lending_pool", pool.authority.as_ref()],
+        bump = pool.bump,
+        has_one = ai_agent,
+    )]
+    pub pool: Account<'info, LendingPool>,
+
+    pub ai_agent: Signer<'info>,
 }
 
 #[derive(Accounts)]
@@ -1213,6 +1251,14 @@ pub struct ParametersUpdatedEvent {
     pub confidence: u8,
     pub mood: ProtocolMood,
     pub update_number: u64,
+    pub timestamp: i64,
+}
+
+#[event]
+pub struct SolPriceUpdatedEvent {
+    pub pool: Pubkey,
+    pub price_usd: u64,
+    pub updater: Pubkey,
     pub timestamp: i64,
 }
 

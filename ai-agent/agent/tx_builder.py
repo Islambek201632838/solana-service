@@ -136,3 +136,138 @@ class TxBuilder:
         data += struct.pack("<B", risk_idx)
 
         return bytes(data)
+
+    # ==========================================
+    # AI Active Action: Set SOL Price
+    # ==========================================
+
+    async def send_set_sol_price(
+        self, pool_authority: Pubkey, price_usd: int
+    ) -> str | None:
+        """AI agent updates SOL/USD price on-chain."""
+        client = await self._get_client()
+        pool_pda, _ = self.derive_pool_pda(pool_authority)
+
+        discriminator = hashlib.sha256(b"global:set_sol_price").digest()[:8]
+        ix_data = discriminator + struct.pack("<Q", price_usd)
+
+        accounts = [
+            AccountMeta(pool_pda, is_signer=False, is_writable=True),
+            AccountMeta(self.keypair.pubkey(), is_signer=True, is_writable=False),
+        ]
+
+        ix = Instruction(self.program_id, bytes(ix_data), accounts)
+
+        for attempt in range(3):
+            try:
+                blockhash_resp = await client.get_latest_blockhash(Finalized)
+                blockhash = blockhash_resp.value.blockhash
+                msg = Message.new_with_blockhash([ix], self.keypair.pubkey(), blockhash)
+                tx = Transaction.new_unsigned(msg)
+                tx.sign([self.keypair], blockhash)
+                result = await client.send_transaction(tx)
+                sig = str(result.value)
+                await client.confirm_transaction(result.value, Confirmed)
+                print(f"[TX] SOL price updated to ${price_usd / 1_000_000:.2f}: {sig}")
+                return sig
+            except Exception as e:
+                if "Blockhash not found" in str(e) and attempt < 2:
+                    import asyncio
+                    await asyncio.sleep(2)
+                    continue
+                print(f"[ERROR] set_sol_price TX failed: {e}")
+                return None
+
+    # ==========================================
+    # AI Active Action: Liquidate
+    # ==========================================
+
+    async def send_liquidate(
+        self,
+        pool_authority: Pubkey,
+        borrower: Pubkey,
+        pool_vault_pda: Pubkey,
+        borrower_token_account: Pubkey,
+        token_program: Pubkey,
+    ) -> str | None:
+        """AI agent triggers liquidation of undercollateralized position."""
+        client = await self._get_client()
+        pool_pda, _ = self.derive_pool_pda(pool_authority)
+
+        borrower_position_pda, _ = Pubkey.find_program_address(
+            [b"user_position", bytes(pool_pda), bytes(borrower)],
+            self.program_id,
+        )
+
+        discriminator = hashlib.sha256(b"global:liquidate").digest()[:8]
+
+        accounts = [
+            AccountMeta(pool_pda, is_signer=False, is_writable=True),
+            AccountMeta(borrower_position_pda, is_signer=False, is_writable=True),
+            AccountMeta(borrower, is_signer=False, is_writable=True),
+            AccountMeta(self.keypair.pubkey(), is_signer=True, is_writable=True),
+            AccountMeta(pool_vault_pda, is_signer=False, is_writable=True),
+            AccountMeta(borrower_token_account, is_signer=False, is_writable=True),
+            AccountMeta(token_program, is_signer=False, is_writable=False),
+            AccountMeta(Pubkey.from_string("11111111111111111111111111111111"), is_signer=False, is_writable=False),
+        ]
+
+        ix = Instruction(self.program_id, discriminator, accounts)
+
+        for attempt in range(3):
+            try:
+                blockhash_resp = await client.get_latest_blockhash(Finalized)
+                blockhash = blockhash_resp.value.blockhash
+                msg = Message.new_with_blockhash([ix], self.keypair.pubkey(), blockhash)
+                tx = Transaction.new_unsigned(msg)
+                tx.sign([self.keypair], blockhash)
+                result = await client.send_transaction(tx)
+                sig = str(result.value)
+                await client.confirm_transaction(result.value, Confirmed)
+                print(f"[TX] Liquidation confirmed: {sig}")
+                return sig
+            except Exception as e:
+                if "Blockhash not found" in str(e) and attempt < 2:
+                    import asyncio
+                    await asyncio.sleep(2)
+                    continue
+                print(f"[ERROR] Liquidate TX failed: {e}")
+                return None
+
+    # ==========================================
+    # AI Active Action: Emergency Freeze
+    # ==========================================
+
+    async def send_ai_emergency_freeze(self, pool_authority: Pubkey) -> str | None:
+        """AI agent freezes protocol during anomaly."""
+        client = await self._get_client()
+        pool_pda, _ = self.derive_pool_pda(pool_authority)
+
+        discriminator = hashlib.sha256(b"global:ai_emergency_freeze").digest()[:8]
+
+        accounts = [
+            AccountMeta(pool_pda, is_signer=False, is_writable=True),
+            AccountMeta(self.keypair.pubkey(), is_signer=True, is_writable=False),
+        ]
+
+        ix = Instruction(self.program_id, discriminator, accounts)
+
+        for attempt in range(3):
+            try:
+                blockhash_resp = await client.get_latest_blockhash(Finalized)
+                blockhash = blockhash_resp.value.blockhash
+                msg = Message.new_with_blockhash([ix], self.keypair.pubkey(), blockhash)
+                tx = Transaction.new_unsigned(msg)
+                tx.sign([self.keypair], blockhash)
+                result = await client.send_transaction(tx)
+                sig = str(result.value)
+                await client.confirm_transaction(result.value, Confirmed)
+                print(f"[TX] AI EMERGENCY FREEZE: {sig}")
+                return sig
+            except Exception as e:
+                if "Blockhash not found" in str(e) and attempt < 2:
+                    import asyncio
+                    await asyncio.sleep(2)
+                    continue
+                print(f"[ERROR] AI freeze TX failed: {e}")
+                return None

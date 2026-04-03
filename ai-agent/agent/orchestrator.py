@@ -165,6 +165,28 @@ class Orchestrator:
             print("[CYCLE] TX failed")
             await self.logger.log_decision(pool, decision, report, None, "tx_failed")
 
+        # ==========================================
+        # 9. AI Active Actions
+        # ==========================================
+
+        # 9a. Update SOL price on-chain
+        if sol_price > 0:
+            price_micro = int(sol_price * 1_000_000)  # store as micro-USD
+            price_tx = await self.tx_builder.send_set_sol_price(
+                pool_authority_pubkey, price_micro
+            )
+            if price_tx:
+                print(f"[CYCLE] SOL price updated on-chain: ${sol_price:.2f}")
+
+        # 9b. AI Emergency Freeze if risk critical
+        risk_score = ml_signals.get("risk_score", 0)
+        is_anomaly = ml_signals.get("anomaly", {}).get("is_anomaly", False)
+        if risk_score > 90 or (is_anomaly and risk_score > 70):
+            print(f"[CYCLE] EMERGENCY: risk={risk_score}, anomaly={is_anomaly}")
+            freeze_tx = await self.tx_builder.send_ai_emergency_freeze(pool_authority_pubkey)
+            if freeze_tx:
+                print(f"[CYCLE] PROTOCOL FROZEN BY AI: {freeze_tx}")
+
         print("[CYCLE] ========================================\n")
 
     def _run_quant(self, prices: list[float]) -> dict:
