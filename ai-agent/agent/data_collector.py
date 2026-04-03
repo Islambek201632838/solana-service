@@ -145,7 +145,8 @@ class DataCollector:
             nonlocal offset
             val = raw[offset : offset + 32]
             offset += 32
-            return base64.b64encode(val).decode()
+            from solders.pubkey import Pubkey
+            return str(Pubkey.from_bytes(val))
 
         def read_u64():
             nonlocal offset

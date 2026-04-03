@@ -50,13 +50,20 @@ class Orchestrator:
         await self.logger.init_db()
         print("[ORCHESTRATOR] Started")
 
-        while True:
-            try:
-                await self.run_cycle()
-            except Exception as e:
-                print(f"[ORCHESTRATOR] Cycle error: {e}")
+        try:
+            while True:
+                try:
+                    await self.run_cycle()
+                except Exception as e:
+                    print(f"[ORCHESTRATOR] Cycle error: {e}")
 
-            await asyncio.sleep(self.settings.ai_cycle_interval)
+                await asyncio.sleep(self.settings.ai_cycle_interval)
+        except (KeyboardInterrupt, asyncio.CancelledError):
+            print("[ORCHESTRATOR] Shutting down...")
+        finally:
+            await self.collector.close()
+            await self.tx_builder.close()
+            print("[ORCHESTRATOR] Cleanup done")
 
     async def run_cycle(self):
         """Single AI decision cycle."""

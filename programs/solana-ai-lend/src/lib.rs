@@ -187,6 +187,21 @@ pub mod solana_ai_lend {
         Ok(())
     }
 
+    /// Unfreeze protocol — authority only.
+    pub fn emergency_unfreeze(ctx: Context<EmergencyFreeze>) -> Result<()> {
+        let pool = &mut ctx.accounts.pool;
+        pool.is_frozen = false;
+
+        let now = Clock::get()?.unix_timestamp;
+        emit!(EmergencyUnfreezeEvent {
+            pool: pool.key(),
+            authority: ctx.accounts.authority.key(),
+            timestamp: now,
+        });
+
+        Ok(())
+    }
+
     pub fn deposit(ctx: Context<Deposit>, amount: u64) -> Result<()> {
         require!(amount > 0, LendError::ZeroAmount);
         require!(!ctx.accounts.pool.is_frozen, LendError::ProtocolFrozen);
@@ -513,7 +528,7 @@ pub mod solana_ai_lend {
         let pool = &ctx.accounts.pool;
         let position = &mut ctx.accounts.user_position;
 
-        require!(position.borrowed > 0, LendError::NothingToLiquidate);
+        require!(position.borrowed > 0, LendError::NoBorrowToAccrue);
 
         let now = Clock::get()?.unix_timestamp;
         let elapsed = (now.checked_sub(position.last_interest_update)
@@ -1209,6 +1224,13 @@ pub struct EmergencyFreezeEvent {
 }
 
 #[event]
+pub struct EmergencyUnfreezeEvent {
+    pub pool: Pubkey,
+    pub authority: Pubkey,
+    pub timestamp: i64,
+}
+
+#[event]
 pub struct LiquidationEvent {
     pub pool: Pubkey,
     pub liquidator: Pubkey,
@@ -1264,4 +1286,6 @@ pub enum LendError {
     InvalidPrice,
     #[msg("Unauthorized")]
     Unauthorized,
+    #[msg("No active borrow to accrue interest on")]
+    NoBorrowToAccrue,
 }
