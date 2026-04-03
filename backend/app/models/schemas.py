@@ -33,6 +33,9 @@ class PoolStatsResponse(BaseModel):
     available_liquidity_usd: float = 0.0
     utilization_pct: float = 0.0
     interest_rate_pct: float = 0.0
+    borrow_rate_pct: float = 0.0     # what borrowers pay
+    lend_rate_pct: float = 0.0       # what lenders earn
+    protocol_fee_pct: float = 10.0   # protocol takes 10%
     collateral_ratio_pct: float = 0.0
     total_collateral_sol: float = 0.0
     sol_price_usd: float = 0.0

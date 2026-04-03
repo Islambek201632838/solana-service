@@ -58,11 +58,12 @@ class AiEngine:
 - Аномалия: {json.dumps(report.get('anomaly', {}))}
 - Тренд: {json.dumps(report.get('trend', {}))}
 
-## Состояние пула
+## Состояние пула (ВАЖНО — основной фактор для ставки!)
 - Текущая ставка: {report.get('current_rate_bps', 500)} bps ({report.get('current_rate_bps', 500) / 100}%)
-- Утилизация: {report.get('utilization', 0):.2%}
-- Оптимальная ставка (кривая): {report.get('optimal_rate_bps', 500)} bps
+- Утилизация: {report.get('utilization', 0):.2%} {'⚠️ ВЫСОКАЯ — ПОВЫСЬ СТАВКУ!' if report.get('utilization', 0) > 0.3 else ''}
+- Оптимальная ставка по формуле Aave: {report.get('optimal_rate_bps', 500)} bps ({report.get('optimal_rate_bps', 500) / 100}%) ← ОРИЕНТИРУЙСЯ НА ЭТО ЧИСЛО
 - Прогноз утилизации: {report.get('predicted_utilization', 0):.2%}
+ПРАВИЛО: Если утилизация >30%, ставка ДОЛЖНА быть БЛИЖЕ к оптимальной (кривая Aave). Не оставляй старую ставку при высокой утилизации!
 
 ## ML модель (RandomForest)
 - Прогноз тренда: {report.get('ml', {}).get('trend', {}).get('direction', 'hold')}
@@ -88,6 +89,8 @@ class AiEngine:
 - collateral_ratio_bps: от 12000 до 20000
 - max_borrow_limit: в токенах с 6 decimals, диапазон 1B-50B
 - Изменение ставки от текущей ≤ 20%
+- Изменение залога от текущего ≤ 20%
+- ВАЖНО: collateral_ratio_bps ОСТАВЬ ТЕКУЩИЙ если нет серьёзной причины менять. Текущий = {report.get('current_collateral_bps', 12000)}
 - confidence: от 0 до 100
 - risk_level: только low, medium, high, critical
 

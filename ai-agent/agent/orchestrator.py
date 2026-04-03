@@ -181,7 +181,7 @@ class Orchestrator:
         is_valid, reason = validate(decision, pool)
         if not is_valid:
             print(f"[CYCLE] Validation FAILED: {reason}")
-            await self.logger.log_decision(pool, decision, report, None, "rejected")
+            # Don't save rejected decisions — no TX to show
             pool_total = pool.get("total_ai_skips", 0)
             return
 
@@ -199,7 +199,7 @@ class Orchestrator:
             await self.logger.log_decision(pool, decision, report, tx_sig, "confirmed")
         else:
             print("[CYCLE] TX failed")
-            await self.logger.log_decision(pool, decision, report, None, "tx_failed")
+            # Don't save failed TX — only confirmed ones matter
 
         # ==========================================
         # 9. AI Active Actions

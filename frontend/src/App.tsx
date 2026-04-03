@@ -19,8 +19,7 @@ import { usePool } from "./hooks/usePool";
 import { useAiDecisions } from "./hooks/useAiDecisions";
 import { useWebSocket } from "./hooks/useWebSocket";
 
-import Deposit from "./pages/Deposit";
-import Borrow from "./pages/Borrow";
+import Activity from "./pages/Activity";
 import AiDecisions from "./pages/AiDecisions";
 import Analytics from "./pages/Analytics";
 
@@ -73,8 +72,7 @@ function DashboardPage() {
 
 function ActivePage({ tab }: { tab: string }) {
   switch (tab) {
-    case "deposit": return <Deposit />;
-    case "borrow": return <Borrow />;
+    case "activity": return <Activity />;
     case "decisions": return <AiDecisions />;
     case "analytics": return <Analytics />;
     default: return <DashboardPage />;

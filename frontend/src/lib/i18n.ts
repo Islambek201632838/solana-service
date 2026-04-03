@@ -108,6 +108,11 @@ const translations = {
     sentimentNotable: "Notable event",
     sentimentSerious: "Serious event",
     sentimentCritical: "Critical event",
+    // Rates
+    lendRate: "Lend APY",
+    borrowRate: "Borrow APR",
+    protocolFee: "Protocol fee",
+
     // Activity
     recentActivity: "Recent Activity",
     noActivity: "No activity yet",
@@ -214,6 +219,10 @@ const translations = {
     sentimentNotable: "Важное событие",
     sentimentSerious: "Серьёзное событие",
     sentimentCritical: "Критическое событие",
+    lendRate: "Доход лендера",
+    borrowRate: "Ставка займа",
+    protocolFee: "Комиссия протокола",
+
     recentActivity: "Последние операции",
     noActivity: "Нет операций",
     actDeposit: "Депозит",

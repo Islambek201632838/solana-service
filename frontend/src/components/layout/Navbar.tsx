@@ -1,4 +1,4 @@
-import { WalletMultiButton } from "@solana/wallet-adapter-react-ui";
+// import { WalletMultiButton } from "@solana/wallet-adapter-react-ui";
 import { useBreakpoint } from "../../hooks/useMediaQuery";
 import { useLang } from "../../hooks/useLang";
 import type { TranslationKey } from "../../lib/i18n";
@@ -11,8 +11,7 @@ interface Props {
 
 const tabs: { id: string; labelKey: TranslationKey }[] = [
   { id: "dashboard", labelKey: "dashboard" },
-  { id: "deposit", labelKey: "deposit" },
-  { id: "borrow", labelKey: "borrow" },
+  { id: "activity", labelKey: "recentActivity" },
   { id: "decisions", labelKey: "aiDecisions" },
   { id: "analytics", labelKey: "analytics" },
 ];
@@ -65,7 +64,7 @@ export default function Navbar({ onMenuToggle, activeTab, onTabChange }: Props) 
           >
             {lang === "en" ? "EN" : "RU"}
           </button>
-          <WalletMultiButton className="!bg-purple-600 !rounded-lg !h-10 !text-sm" />
+          {/* <WalletMultiButton className="!bg-purple-600 !rounded-lg !h-10 !text-sm" /> */}
         </div>
       </div>
     </nav>

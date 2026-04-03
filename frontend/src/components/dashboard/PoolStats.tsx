@@ -5,11 +5,17 @@ interface Props {
   loading: boolean;
 }
 
-function StatCard({ label, value, sub }: { label: string; value: string; sub?: string }) {
+const colorMap: Record<string, string> = {
+  green: "text-green-400",
+  orange: "text-orange-400",
+  red: "text-red-400",
+};
+
+function StatCard({ label, value, sub, color }: { label: string; value: string; sub?: string; color?: string }) {
   return (
     <div className="bg-gray-900 rounded-xl border border-gray-800 p-4">
       <p className="text-xs text-gray-500 uppercase tracking-wide">{label}</p>
-      <p className="text-xl font-bold mt-1">{value}</p>
+      <p className={`text-xl font-bold mt-1 ${color ? colorMap[color] ?? "" : ""}`}>{value}</p>
       {sub && <p className="text-xs text-gray-500 mt-1">{sub}</p>}
     </div>
   );
@@ -37,27 +43,31 @@ export default function PoolStats({ stats, loading }: Props) {
   }
 
   return (
-    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-      <StatCard
-        label={t("totalDeposits")}
-        value={`$${stats.total_deposits_usd?.toLocaleString() ?? "0"}`}
-        sub={`${stats.utilization_pct?.toFixed(1) ?? 0}% ${t("utilization")}`}
-      />
-      <StatCard
-        label={t("interestRate")}
-        value={`${stats.interest_rate_pct?.toFixed(2) ?? 0}%`}
-        sub={`${t("collateral")}: ${stats.collateral_ratio_pct?.toFixed(0) ?? 0}%`}
-      />
-      <StatCard
-        label={t("totalBorrows")}
-        value={`$${stats.total_borrows_usd?.toLocaleString() ?? "0"}`}
-        sub={`${t("liquidity")}: $${stats.available_liquidity_usd?.toLocaleString() ?? "0"}`}
-      />
-      <StatCard
-        label={t("aiUpdates")}
-        value={String(stats.total_ai_updates ?? 0)}
-        sub={`${stats.total_liquidations ?? 0} ${t("liquidations")}`}
-      />
+    <div className="space-y-3">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+        <StatCard
+          label={t("totalDeposits")}
+          value={`$${stats.total_deposits_usd?.toLocaleString() ?? "0"}`}
+          sub={`${stats.utilization_pct?.toFixed(1) ?? 0}% ${t("utilization")}`}
+        />
+        <StatCard
+          label={t("totalBorrows")}
+          value={`$${stats.total_borrows_usd?.toLocaleString() ?? "0"}`}
+          sub={`${t("liquidity")}: $${stats.available_liquidity_usd?.toLocaleString() ?? "0"}`}
+        />
+        <StatCard
+          label={t("lendRate")}
+          value={`${stats.lend_rate_pct?.toFixed(2) ?? 0}%`}
+          sub={`${t("collateral")}: ${stats.collateral_ratio_pct?.toFixed(0) ?? 0}%`}
+          color="green"
+        />
+        <StatCard
+          label={t("borrowRate")}
+          value={`${stats.borrow_rate_pct?.toFixed(2) ?? 0}%`}
+          sub={`AI ${t("aiUpdates").toLowerCase()}: ${stats.total_ai_updates ?? 0}`}
+          color="orange"
+        />
+      </div>
     </div>
   );
 }

@@ -81,6 +81,27 @@ services:
       - internal
 
   # ================================================
+  # Activity Simulator (borrow/repay every 10 min)
+  # ================================================
+  activity-sim:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.activity
+    restart: unless-stopped
+    env_file:
+      - ../.env
+    environment:
+      - ANCHOR_PROVIDER_URL=https://api.devnet.solana.com
+      - ANCHOR_WALLET=/app/keys/deployer.json
+    volumes:
+      - ../keys:/app/keys:ro
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - internal
+
+  # ================================================
   # Frontend (React + Vite → nginx)
   # ================================================
   frontend:
