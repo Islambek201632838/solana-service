@@ -108,6 +108,14 @@ const translations = {
     sentimentNotable: "Notable event",
     sentimentSerious: "Serious event",
     sentimentCritical: "Critical event",
+    // Activity
+    recentActivity: "Recent Activity",
+    noActivity: "No activity yet",
+    actDeposit: "Deposit",
+    actBorrow: "Borrow",
+    actRepay: "Repay",
+    actCollateral: "Collateral",
+    actLiquidate: "Liquidation",
   },
   ru: {
     dashboard: "Дашборд",
@@ -206,6 +214,13 @@ const translations = {
     sentimentNotable: "Важное событие",
     sentimentSerious: "Серьёзное событие",
     sentimentCritical: "Критическое событие",
+    recentActivity: "Последние операции",
+    noActivity: "Нет операций",
+    actDeposit: "Депозит",
+    actBorrow: "Займ",
+    actRepay: "Возврат",
+    actCollateral: "Залог",
+    actLiquidate: "Ликвидация",
   },
 } as const;
 

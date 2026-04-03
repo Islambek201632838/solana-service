@@ -14,6 +14,7 @@ import PoolStats from "./components/dashboard/PoolStats";
 import ProtocolMoodBadge from "./components/dashboard/ProtocolMoodBadge";
 import RateChart from "./components/dashboard/RateChart";
 import AiDecisionCard from "./components/dashboard/AiDecisionCard";
+import ActivityFeed from "./components/dashboard/ActivityFeed";
 import { usePool } from "./hooks/usePool";
 import { useAiDecisions } from "./hooks/useAiDecisions";
 import { useWebSocket } from "./hooks/useWebSocket";
@@ -46,6 +47,11 @@ function DashboardPage() {
 
       <PoolStats stats={stats} loading={loading} />
       <RateChart />
+
+      <div>
+        <h3 className="text-lg font-semibold mb-3">{t("recentActivity")}</h3>
+        <ActivityFeed />
+      </div>
 
       <div>
         <h3 className="text-lg font-semibold mb-3">{t("recentAiDecisions")}</h3>

@@ -13,13 +13,6 @@ const RISK_FILTERS: { value: string; labelKey: TranslationKey }[] = [
   { value: "critical", labelKey: "riskCritical" },
 ];
 
-const riskLabelKeys: Record<string, TranslationKey> = {
-  low: "riskLow",
-  medium: "riskMedium",
-  high: "riskHigh",
-  critical: "riskCritical",
-};
-
 export default function AiDecisions() {
   const [page, setPage] = useState(1);
   const [riskFilter, setRiskFilter] = useState("all");
@@ -72,56 +65,6 @@ export default function AiDecisions() {
       ) : !data?.items?.length ? (
         <div className="bg-gray-900 rounded-xl border border-gray-800 p-8 text-center text-gray-500">
           {t("noAiDecisions")}
-        </div>
-      ) : isDesktop ? (
-        <div className="bg-gray-900 rounded-xl border border-gray-800 overflow-hidden">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-gray-800 text-gray-500 text-left">
-                <th className="p-3">{t("time")}</th>
-                <th className="p-3">{t("rate")}</th>
-                <th className="p-3">{t("change")}</th>
-                <th className="p-3">{t("risk")}</th>
-                <th className="p-3">{t("confidence")}</th>
-                <th className="p-3">ML</th>
-                <th className="p-3">{t("tx")}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {data.items.map((d: any) => (
-                <tr key={d.id} className="border-b border-gray-800/50 hover:bg-gray-800/30">
-                  <td className="p-3 text-gray-400">{new Date(d.timestamp).toLocaleString()}</td>
-                  <td className="p-3 font-mono">{(d.new_rate / 100).toFixed(2)}%</td>
-                  <td className={`p-3 font-mono ${d.new_rate > d.old_rate ? "text-green-400" : d.new_rate < d.old_rate ? "text-red-400" : "text-gray-500"}`}>
-                    {d.new_rate > d.old_rate ? "+" : ""}{((d.new_rate - d.old_rate) / 100).toFixed(2)}%
-                  </td>
-                  <td className="p-3">{t(riskLabelKeys[d.risk_level] ?? "riskMedium")}</td>
-                  <td className="p-3">{d.confidence}%</td>
-                  <td className="p-3">
-                    <div className="flex flex-wrap gap-1">
-                      {d.rsi > 0 && <span className="text-xs px-1 rounded bg-gray-800">RSI {d.rsi?.toFixed(0)}</span>}
-                      {d.trend_direction && (
-                        <span className={`text-xs px-1 rounded bg-gray-800 ${
-                          d.trend_direction === "up" ? "text-green-400" : d.trend_direction === "down" ? "text-red-400" : ""
-                        }`}>
-                          {d.trend_direction === "up" ? "\u2191" : d.trend_direction === "down" ? "\u2193" : "\u2194"}{" "}
-                          {d.trend_proba_up > 0 ? `${(d.trend_proba_up * 100).toFixed(0)}%` : ""}
-                        </span>
-                      )}
-                      {d.anomaly_detected && <span className="text-xs px-1 rounded bg-red-500/20 text-red-400">!</span>}
-                    </div>
-                  </td>
-                  <td className="p-3">
-                    {d.tx_signature ? (
-                      <a href={`https://solscan.io/tx/${d.tx_signature}?cluster=devnet`} target="_blank" rel="noopener noreferrer" className="text-purple-400 hover:underline">
-                        {t("view")}
-                      </a>
-                    ) : "—"}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
         </div>
       ) : (
         <div className="space-y-3">

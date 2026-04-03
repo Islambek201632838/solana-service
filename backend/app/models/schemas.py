@@ -86,6 +86,23 @@ class AiDecisionListResponse(BaseModel):
     limit: int = 10
 
 
+class ActivityResponse(BaseModel):
+    id: int = 0
+    timestamp: str = ""
+    action: str = ""           # deposit, withdraw, borrow, repay, deposit_collateral, liquidate
+    user: str = ""             # pubkey
+    amount: float = 0.0        # aiUSDC or SOL
+    token: str = "aiUSDC"      # aiUSDC or SOL
+    tx_signature: str = ""
+    pool_util_after: float = 0.0
+    rate_at_time: float = 0.0
+
+
+class ActivityListResponse(BaseModel):
+    items: list[ActivityResponse] = []
+    total: int = 0
+
+
 class HealthResponse(BaseModel):
     status: str = "ok"
     version: str = "0.1.0"

@@ -35,3 +35,9 @@ export async function fetchRiskHistory(limit = 50) {
   if (!res.ok) throw new Error(`Risk history: ${res.status}`);
   return res.json();
 }
+
+export async function fetchActivity(limit = 20) {
+  const res = await fetch(`${API_URL}/api/activity/?limit=${limit}`);
+  if (!res.ok) throw new Error(`Activity: ${res.status}`);
+  return res.json();
+}
