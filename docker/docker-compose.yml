@@ -88,8 +88,8 @@ services:
       context: ../frontend
       dockerfile: Dockerfile
       args:
-        VITE_API_URL: ${VITE_API_URL:-http://localhost:8000}
-        VITE_WS_URL: ${VITE_WS_URL:-ws://localhost:8000/ws}
+        VITE_API_URL: ""
+        VITE_WS_URL: ""
         VITE_SOLANA_RPC: ${VITE_SOLANA_RPC:-https://api.devnet.solana.com}
         VITE_PROGRAM_ID: ${VITE_PROGRAM_ID:-${PROGRAM_ID}}
     env_file:
