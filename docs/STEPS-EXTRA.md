@@ -1548,3 +1548,680 @@ CrewDegen: трейды каждые 30 мин        ✓ 11-min cycle + dry-run
 Если времени мало → A + B + 21
 AI Intelligence + Production DeFi = победа
 ```
+
+---
+
+# ═══════════════════════════════════════════════════════════
+# БЛОК F-I: Insurance · Crash Protection · Dynamic LTV · Yield
+# ═══════════════════════════════════════════════════════════
+
+---
+
+## БЛОК F — "Insurance & Crash Protection" (5ч)
+
+> **Зачем:** Жюри спросит "что если SOL упадёт на 40% за час?"
+> Без страховки — bad debt, лендеры теряют деньги.
+> С Insurance Fund + Circuit Breakers — протокол выживает.
+
+---
+
+## Степ 35 — Insurance Fund (резерв на bad debt)
+**Время:** ~2 часа
+**Приоритет:** ВЫСОКИЙ — отличает production от учебного проекта
+**Источник:** Marginfi insurance fund, Aave Safety Module
+
+### Проблема
+
+SOL падает с $150 до $90 за 30 минут (реальный кейс — ноябрь 2022).
+Ликвидаторы не успевают. Залог $100 → теперь стоит $60, долг $80.
+**Bad debt = $20.** Кто платит? Без insurance — все лендеры пропорционально.
+
+### Решение
+
+10% от процентного дохода → Insurance Vault (отдельный PDA).
+Если bad debt — покрывается из фонда, лендеры не страдают.
+
+**Контракт (lib.rs):**
+```rust
+// Добавить в LendingPool:
+pub insurance_fund_bps: u16,      // 1000 = 10% от interest
+pub insurance_balance: u64,       // накопленный резерв
+pub total_bad_debt_covered: u64,  // сколько покрыто за всё время
+
+// В repay() — отчислять % в фонд:
+fn accrue_to_insurance(pool: &mut LendingPool, interest_paid: u64) {
+    let insurance_cut = interest_paid * pool.insurance_fund_bps as u64 / 10000;
+    pool.insurance_balance = pool.insurance_balance.saturating_add(insurance_cut);
+    pool.available_liquidity = pool.available_liquidity.saturating_sub(insurance_cut);
+}
+
+// Новая инструкция: cover_bad_debt (только authority)
+pub fn cover_bad_debt(ctx: Context<CoverBadDebt>, amount: u64) -> Result<()> {
+    let pool = &mut ctx.accounts.lending_pool;
+    require!(amount <= pool.insurance_balance, LendError::InsufficientInsurance);
+    pool.insurance_balance -= amount;
+    pool.total_bad_debt_covered += amount;
+    pool.total_borrows = pool.total_borrows.saturating_sub(amount);
+    emit!(BadDebtCoveredEvent { amount, remaining: pool.insurance_balance });
+    Ok(())
+}
+```
+
+**AI роль (ML помогает):**
+```python
+# В orchestrator — AI мониторит фонд:
+if insurance_balance < total_borrows * 0.02:  # < 2% от займов
+    logger.warning("Insurance fund low! Recommending rate increase")
+    # AI повышает ставку → больше interest → фонд пополняется быстрее
+```
+
+**Backend:** `GET /api/pool/stats` → добавить `insurance_balance`, `insurance_pct`
+
+**Frontend — виджет на дашборде:**
+```
+┌── Insurance Fund ──────────────────┐
+│ Balance: $12,450 (2.3% of borrows)│
+│ ████████░░░░░ 2.3% / 5% target   │
+│ Bad debt covered: $0 (lifetime)    │
+│ Funded by: 10% of interest income │
+└────────────────────────────────────┘
+```
+
+### Для жюри:
+> "Insurance Fund как у Marginfi — 10% процентов идёт в резерв.
+> Bad debt покрывается без убытков для лендеров."
+
+---
+
+## Степ 36 — Circuit Breakers + AI Crash Detector
+**Время:** ~2 часа
+**Приоритет:** ВЫСОКИЙ — спасает от bank run + AI предсказывает крэши
+**Источник:** Solend crisis 2022 (whale withdrawal), Aave v3 rate limiters
+
+### Проблема
+
+Паника на рынке → все выводят одновременно → pool drained → последний не получает ничего.
+Solend 2022: один кит попытался вывести $170M → governance голосование о принудительной ликвидации.
+
+### Решение: 3 уровня защиты
+
+**Уровень 1: Withdrawal Rate Limit (контракт)**
+```rust
+// Добавить в LendingPool:
+pub max_withdraw_per_epoch: u64,   // макс вывод за 1 эпоху (~2 дня)
+pub withdrawn_this_epoch: u64,
+pub current_epoch: u64,
+
+// В withdraw():
+fn check_withdrawal_limit(pool: &mut LendingPool, amount: u64) -> Result<()> {
+    let clock = Clock::get()?;
+    let epoch = clock.epoch;
+    if epoch != pool.current_epoch {
+        pool.current_epoch = epoch;
+        pool.withdrawn_this_epoch = 0;
+    }
+    let new_total = pool.withdrawn_this_epoch.checked_add(amount)
+        .ok_or(LendError::MathOverflow)?;
+    require!(new_total <= pool.max_withdraw_per_epoch, LendError::WithdrawalLimitExceeded);
+    pool.withdrawn_this_epoch = new_total;
+    Ok(())
+}
+```
+
+**Уровень 2: Position Size Cap (контракт)**
+```rust
+// В deposit(): один юзер не может быть > 30% пула
+let max_position = pool.total_deposits * 3000 / 10000; // 30%
+require!(position.deposited + amount <= max_position, LendError::PositionTooLarge);
+```
+
+**Уровень 3: AI Crash Detector (ML модель)**
+```python
+# ai-agent/agent/crash_detector.py
+class CrashDetector:
+    """Detects high probability of >10% drop in next 4 hours."""
+    
+    def predict(self, prices_1h: list, volumes: list, funding_rates: list) -> dict:
+        features = {
+            "price_change_1h": (prices_1h[-1] - prices_1h[-2]) / prices_1h[-2],
+            "price_change_4h": (prices_1h[-1] - prices_1h[-5]) / prices_1h[-5],
+            "volume_spike": volumes[-1] / np.mean(volumes[-24:]),
+            "consecutive_red": count_consecutive_negative(prices_1h),
+            "below_sma20": 1 if prices_1h[-1] < np.mean(prices_1h[-20:]) else 0,
+            "volatility_1h": np.std(prices_1h[-4:]) / np.mean(prices_1h[-4:]),
+        }
+        
+        # Простые правила + порог (не нужен sklearn — работает надёжно)
+        risk = 0
+        if features["price_change_4h"] < -0.05: risk += 30   # -5% за 4ч
+        if features["volume_spike"] > 3.0: risk += 25         # объём x3
+        if features["consecutive_red"] >= 4: risk += 20       # 4 красных свечи
+        if features["volatility_1h"] > 0.03: risk += 15       # высокая волатильность
+        if features["below_sma20"]: risk += 10                 # ниже SMA20
+        
+        return {
+            "crash_probability": min(risk, 100),
+            "action": "freeze" if risk > 80 else "raise_rate" if risk > 50 else "none",
+            "features": features
+        }
+```
+
+**Orchestrator — реагирует на сигнал:**
+```python
+crash = crash_detector.predict(prices, volumes, funding)
+if crash["action"] == "freeze":
+    await tx_builder.send_emergency_freeze()
+    logger.critical(f"CRASH DETECTED ({crash['crash_probability']}%) → FREEZE")
+elif crash["action"] == "raise_rate":
+    # Повысить ставку чтобы стимулировать возврат займов
+    decision["interest_rate_bps"] = min(current + 200, max_rate)
+    logger.warning(f"Crash risk {crash['crash_probability']}% → rate +2%")
+```
+
+**Frontend:**
+```
+Нормально:                      Опасно:
+┌── Market Risk ─────────┐     ┌── Market Risk ─────────────┐
+│ Crash probability: 12% │     │ ⚠ Crash probability: 67%  │
+│ ██░░░░░░░░ LOW         │     │ ██████░░░░ HIGH            │
+│ Status: Normal         │     │ AI: raised rate +2%        │
+└────────────────────────┘     │ Withdrawals: limited       │
+                                └────────────────────────────┘
+```
+
+### Для жюри:
+> "3 уровня crash protection: withdrawal limits, position caps, AI crash detector.
+> Мы пережили бы Solend 2022 crisis без governance голосования."
+
+---
+
+## Степ 37 — Liquidation Queue (справедливая очередь)
+**Время:** ~1 час
+**Приоритет:** СРЕДНИЙ — оптимизация ликвидаций при массовом падении
+
+### Проблема
+
+SOL -30% → 50 позиций на ликвидацию одновременно. Один keeper забирает все бонусы.
+Мелкие keepers не могут конкурировать.
+
+### Решение
+
+AI сортирует позиции по приоритету → backend отдаёт очередь → keeper берёт следующую.
+
+**Backend:**
+```python
+# GET /api/liquidation/queue
+async def get_liquidation_queue():
+    positions = await reader.get_all_positions()
+    at_risk = [p for p in positions if p.health_factor < 10000]
+    # Приоритет: самые опасные первыми
+    at_risk.sort(key=lambda p: p.health_factor)
+    return [{"address": p.address, "health": p.health_factor / 10000,
+             "debt": p.borrowed, "reward_estimate": p.borrowed * keeper_reward / 10000}
+            for p in at_risk[:20]]
+```
+
+**Frontend — добавить в Leaderboard вкладку "Liquidation Queue":**
+```
+┌── Liquidation Queue ─────────────────────────────┐
+│ #  Position     Health  Debt      Est. Reward    │
+│ 1  3Ab1...cE   0.82    $2,400    $24.00         │
+│ 2  7Kd9...2hF  0.91    $1,800    $18.00         │
+│ 3  Mf4k...2Q   0.96    $950      $9.50          │
+│                                                   │
+│ Total positions at risk: 3                        │
+│ Total debt to liquidate: $5,150                   │
+│ Insurance fund coverage: 242% ✅                  │
+└──────────────────────────────────────────────────┘
+```
+
+---
+
+## БЛОК G — "Dynamic Collateral & Smart Borrowing" (4ч)
+
+> **Зачем:** Статичный 150% залог — это 2020 год.
+> Production протоколы (Aave v3, Kamino) адаптируют LTV к рынку.
+> AI + динамический залог = уникальная фича.
+
+---
+
+## Степ 38 — AI Dynamic LTV (залог адаптируется к рынку)
+**Время:** ~2 часа
+**Приоритет:** ВЫСОКИЙ — ни один хакатон-проект не делает это с ML
+**Источник:** Aave v3 E-mode, Kamino dynamic parameters
+
+### Проблема
+
+Сейчас: залог 150% всегда. Но:
+- Рынок спокойный (vol < 2%) → 150% избыточно, юзеры уходят к конкурентам с 130%
+- Рынок штормит (vol > 5%) → 150% мало, позиции ликвидируются каскадно
+
+### Решение: AI подбирает залог на основе волатильности
+
+**AI Agent (уже есть volatility_model!):**
+```python
+# В orchestrator — уже есть волатильность от VolatilityModel
+# Добавить логику:
+
+def calculate_dynamic_collateral(volatility: float, base_ratio: int = 15000) -> int:
+    """
+    Low vol (< 2%)  → 13000 (130%) — привлекаем заёмщиков
+    Normal (2-4%)   → 15000 (150%) — стандарт
+    High (4-7%)     → 17000 (170%) — защита
+    Extreme (> 7%)  → 20000 (200%) — максимальная защита
+    """
+    if volatility < 0.02:
+        return max(base_ratio - 2000, 13000)
+    elif volatility < 0.04:
+        return base_ratio
+    elif volatility < 0.07:
+        return min(base_ratio + 2000, 18000)
+    else:
+        return min(base_ratio + 5000, 20000)
+
+# В цикле AI:
+new_collateral = calculate_dynamic_collateral(vol_model.current_volatility)
+decision["collateral_ratio_bps"] = new_collateral
+# → AI уже может обновлять collateral_ratio_bps через update_parameters!
+```
+
+**Контракт:** уже поддерживает — `update_parameters` меняет `collateral_ratio_bps`.
+Guard rails: `min_collateral_ratio_bps` ... `max_collateral_ratio_bps` (120%-200%).
+
+**Frontend — показать текущий режим:**
+```
+┌── Collateral Mode ──────────────────────────────┐
+│ Current: 150% (Normal Market)                    │
+│                                                   │
+│ 130% ──── 150% ──── 170% ──── 200%              │
+│ Calm      Normal     Storm     Extreme            │
+│              ▲                                    │
+│          YOU ARE HERE                              │
+│                                                   │
+│ Volatility: 3.1% (24h) — Normal                  │
+│ AI adjusted: 2 hours ago                          │
+│ Next check: ~9 min                                │
+└──────────────────────────────────────────────────┘
+```
+
+### Для жюри:
+> "Динамический LTV как Aave v3 E-mode, но управляемый AI.
+> Спокойный рынок → ниже залог → больше заёмщиков → больше дохода.
+> Шторм → выше залог → защита ликвидности. AI адаптируется автоматически."
+
+---
+
+## Степ 39 — Loyalty-Based LTV (лояльные юзеры = лучшие условия)
+**Время:** ~1 час
+**Приоритет:** СРЕДНИЙ — retention + gamification
+**Источник:** Aave v3 credit delegation, traditional banking credit scores
+
+### Проблема
+
+Новичок и юзер с 200 операциями + Gold tier получают одинаковые условия.
+В TradFi хорошая кредитная история = лучшая ставка.
+
+### Решение
+
+Loyalty tier влияет на collateral requirement:
+
+```
+Tier       Operations  Collateral Discount  Effective LTV
+─────────────────────────────────────────────────────────
+Bronze     0-9         0%                   150% (стандарт)
+Silver     10-49       -5%                  143%
+Gold       50-99       -10%                 136%
+Platinum   100+        -15%                 130%
+```
+
+**Контракт (lib.rs) — в borrow():**
+```rust
+// После расчёта required collateral:
+let loyalty_discount = match position.loyalty_tier {
+    0 => 0u16,    // Bronze
+    1 => 500,     // Silver: -5%
+    2 => 1000,    // Gold: -10%
+    3 => 1500,    // Platinum: -15%
+    _ => 0,
+};
+let adjusted_ratio = pool.collateral_ratio_bps.saturating_sub(loyalty_discount);
+let adjusted_ratio = adjusted_ratio.max(pool.min_collateral_ratio_bps); // не ниже минимума
+```
+
+**Frontend — показать в Borrow форме:**
+```
+Collateral required: 136% (Gold tier discount: -10%)
+Standard rate: 150% → Your rate: 136%
+```
+
+### Для жюри:
+> "On-chain credit scoring. Лояльные юзеры получают лучшие условия.
+> Tier хранится on-chain, манипуляция невозможна."
+
+---
+
+## Степ 40 — Borrow APY Estimator (покажи цену займа)
+**Время:** ~1 час
+**Приоритет:** СРЕДНИЙ — UX, юзер понимает сколько заплатит
+
+### Проблема
+
+Юзер видит "5.5% APY" но не понимает: сколько я заплачу за $1000 за месяц?
+
+### Решение
+
+Калькулятор в Borrow форме:
+
+**Frontend:**
+```
+┌── Borrow Calculator ────────────────────────────┐
+│ Borrow: $1,000 aiUSDC                           │
+│ Current rate: 5.50% APY                          │
+│                                                   │
+│ You will pay:                                     │
+│   Daily:   $0.15                                  │
+│   Weekly:  $1.06                                  │
+│   Monthly: $4.58                                  │
+│   Yearly:  $55.00                                 │
+│                                                   │
+│ ⚡ AI may adjust rate. Current trend: stable     │
+│ 📊 Rate history: 4.2% → 5.5% (last 7 days)     │
+└──────────────────────────────────────────────────┘
+```
+
+Чистый фронтенд, бэкенд не нужен — расчёт из текущего rate.
+
+---
+
+## БЛОК H — "Yield & Advanced Strategies" (4ч)
+
+> **Зачем:** Лендеры хотят больше чем базовый %. LST + auto-compound =
+> конкурентное преимущество над протоколами с простым deposit/withdraw.
+
+---
+
+## Степ 41 — Supply APY Boost (AI оптимизирует доход лендеров)
+**Время:** ~1.5 часа
+**Приоритет:** СРЕДНИЙ — AI управляет utilization для макс дохода
+
+### Проблема
+
+Лендер получает: `supply_apy = borrow_rate * utilization`.
+Если utilization 40% и rate 5% → supply APY = 2%. Мало.
+Если utilization 85% и rate 8% → supply APY = 6.8%. Хорошо, но опасно.
+
+### Решение: AI целит в оптимальную utilization (70-80%)
+
+**AI Agent — уже есть utilization_predictor!:**
+```python
+# Добавить в orchestrator:
+target_utilization = 0.75  # 75% — оптимум (доход vs безопасность)
+current_util = pool.total_borrows / pool.total_deposits
+
+if current_util < 0.65:
+    # Мало заёмщиков → понизить ставку → привлечь
+    direction = "decrease"
+elif current_util > 0.82:
+    # Много заёмщиков → повысить ставку → охладить
+    direction = "increase"
+else:
+    direction = "hold"  # оптимальная зона
+```
+
+**Backend:** `GET /api/pool/stats` → добавить `supply_apy`, `optimal_utilization`
+
+**Frontend — виджет для лендеров:**
+```
+┌── Your Earnings ───────────────────────────────┐
+│ Deposited: $5,000 aiUSDC                        │
+│ Supply APY: 4.2%                                 │
+│                                                   │
+│ Earnings:                                         │
+│   Today:     $0.58                                │
+│   This week: $4.03                                │
+│   This month: $17.50                              │
+│   Total:     $52.30 (since deposit)               │
+│                                                   │
+│ Utilization: 72% (optimal zone ✅)                │
+│ AI target: 70-80% → maximizing your yield         │
+└──────────────────────────────────────────────────┘
+```
+
+---
+
+## Степ 42 — Multi-Asset Collateral (LST support roadmap)
+**Время:** ~1 час (презентация + код-заготовка)
+**Приоритет:** НИЗКИЙ — roadmap для жюри, не полная реализация
+
+### Идея
+
+Сейчас: только SOL как залог.
+Будущее: jitoSOL, mSOL, bSOL — с дисконтом LTV (LST risk premium).
+
+```
+Collateral     Base LTV   Liq Threshold   Risk Premium
+────────────────────────────────────────────────────
+SOL            67%        83%             0% (базовый)
+jitoSOL        63%        80%             -4% (smart contract risk)
+mSOL           63%        80%             -4%
+bSOL           60%        78%             -7%
+```
+
+**Для хакатона:** scaffold в контракте + слайд в презентации.
+
+**Frontend — в Production Readiness:**
+```
+⬜ Phase 7: Multi-Collateral (jitoSOL, mSOL, bSOL)
+   AI adjusts LTV per asset based on depeg risk
+```
+
+### Для жюри:
+> "Roadmap к multi-collateral с AI risk pricing per asset.
+> LST depeg → AI автоматически снижает LTV для этого актива."
+
+---
+
+## БЛОК I — "AI Risk Intelligence" (3ч)
+
+> **Зачем:** Это то что делает проект УНИКАЛЬНЫМ.
+> Любой может скопировать Insurance Fund. Но AI crash prediction +
+> dynamic risk scoring + adaptive liquidation — только у нас.
+
+---
+
+## Степ 43 — AI Preemptive Actions (действуй ДО проблемы)
+**Время:** ~1.5 часа
+**Приоритет:** ВЫСОКИЙ — главное конкурентное преимущество
+**ML:** да, использует crash_detector + risk_scorer + sentiment
+
+### Проблема
+
+Обычные протоколы реагируют ПОСЛЕ проблемы (ликвидация когда health < 1.0).
+Наш AI действует ДО проблемы.
+
+### Решение: Preemptive Action Matrix
+
+```
+Сигнал                          Действие AI                    Порог
+──────────────────────────────────────────────────────────────────────
+Crash probability > 50%         Повысить collateral +10%       ML
+Sentiment score < -0.5          Повысить rate +1%              Gemini
+Volatility > 5% (4h)           Повысить collateral +5%        Math
+Utilization > 85%               Повысить rate +0.5%            On-chain
+3+ positions health < 1.2       Предупреждение в UI            Backend
+Funding rate negative            Снизить rate -0.5%            API data
+```
+
+**AI Agent — preemptive_engine.py:**
+```python
+class PreemptiveEngine:
+    """Combine signals from all models into preemptive actions."""
+    
+    async def evaluate(self, crash_prob, sentiment, volatility, 
+                       utilization, positions_at_risk) -> list[dict]:
+        actions = []
+        
+        if crash_prob > 50:
+            actions.append({
+                "type": "raise_collateral",
+                "amount_bps": 1000,  # +10%
+                "reason": f"Crash probability {crash_prob}%",
+                "urgency": "high"
+            })
+        
+        if sentiment < -0.5:
+            actions.append({
+                "type": "raise_rate",
+                "amount_bps": 100,   # +1%
+                "reason": f"Negative sentiment: {sentiment:.2f}",
+                "urgency": "medium"
+            })
+        
+        if positions_at_risk >= 3:
+            actions.append({
+                "type": "warn_users",
+                "message": f"{positions_at_risk} positions approaching liquidation",
+                "urgency": "medium"
+            })
+        
+        return actions
+```
+
+**Frontend — AI Actions Feed:**
+```
+┌── AI Preemptive Actions ────────────────────────────┐
+│                                                       │
+│ 🔮 14:30 — Collateral raised 150% → 160%            │
+│    Reason: crash probability 62%, volatility spike    │
+│    Impact: 0 positions affected                       │
+│                                                       │
+│ 📊 12:15 — Rate raised 5% → 5.5%                    │
+│    Reason: utilization 87%, above safety threshold    │
+│    Impact: borrower cost +$0.42/day per $1000         │
+│                                                       │
+│ ✅ 10:00 — No action needed                          │
+│    All signals normal, market stable                  │
+└──────────────────────────────────────────────────────┘
+```
+
+### Для жюри:
+> "AI не ждёт проблем — он их предотвращает. 6 сигналов,
+> автоматические превентивные действия. Как autopilot для DeFi."
+
+---
+
+## Степ 44 — Risk Dashboard (всё в одном месте)
+**Время:** ~1.5 часа
+**Приоритет:** СРЕДНИЙ — визуализация всей risk-системы
+
+### Решение: одна страница /risk со всей информацией
+
+**Frontend — /risk:**
+```
+┌── Protocol Risk Dashboard ──────────────────────────────────┐
+│                                                              │
+│  ┌── Market ──────────┐  ┌── Protocol ────────────────┐    │
+│  │ SOL: $148.20       │  │ Utilization: 72%            │    │
+│  │ 24h: -2.1%         │  │ Total deposits: $540K       │    │
+│  │ Volatility: 3.2%   │  │ Total borrows: $389K        │    │
+│  │ Sentiment: 0.3     │  │ Insurance: $12.4K (3.2%)    │    │
+│  │ Crash prob: 18%    │  │ Bad debt: $0                │    │
+│  └────────────────────┘  └─────────────────────────────┘    │
+│                                                              │
+│  ┌── Positions ────────────────────────────────────────┐    │
+│  │ Total: 60  |  Healthy: 55  |  Watch: 4  |  Risk: 1 │    │
+│  │ ██████████████████████████████████░░░░░░░░ █        │    │
+│  │ green                         yellow       red       │    │
+│  └─────────────────────────────────────────────────────┘    │
+│                                                              │
+│  ┌── Protection Layers ────────────────────────────────┐    │
+│  │ 1. AI Prompt Guard     ✅                           │    │
+│  │ 2. Python Validator    ✅ hash synced               │    │
+│  │ 3. On-chain Guards     ✅ PDA active                │    │
+│  │ 4. Emergency Freeze    ✅ ready                     │    │
+│  │ 5. Auto-rate           ✅ ready (0 danger slots)    │    │
+│  │ 6. Insurance Fund      ✅ $12.4K (3.2% coverage)   │    │
+│  │ 7. Circuit Breakers    ✅ limits active              │    │
+│  │ 8. AI Crash Detector   ✅ monitoring (18% risk)     │    │
+│  └─────────────────────────────────────────────────────┘    │
+│                                                              │
+│  ┌── AI Models ────────────────────────────────────────┐    │
+│  │ Crash Detector:  78% accuracy  weight: 0.28         │    │
+│  │ Risk Scorer:     71% accuracy  weight: 0.25         │    │
+│  │ Trend Predictor: 62% accuracy  weight: 0.21         │    │
+│  │ Volatility:      55% accuracy  weight: 0.16         │    │
+│  │ Utilization:     48% accuracy  weight: 0.10         │    │
+│  └─────────────────────────────────────────────────────┘    │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**Backend:** `GET /api/risk/dashboard` — агрегирует все метрики.
+
+---
+
+## Финальная сводка: Степы 35-44
+
+```
+Степ  Что                                  Часы  ML/AI?  Баллы
+────────────────────────────────────────────────────────────────
+
+БЛОК F — Insurance & Crash Protection:
+ 35   Insurance Fund (PDA + auto-accrue)    2     AI мониторинг   Innovation +4
+ 36   Circuit Breakers + AI Crash Detector  2     ML (signals)    Innovation +5 🔥
+ 37   Liquidation Queue (fair ordering)     1     AI сортировка   Technical +2
+
+БЛОК G — Dynamic Collateral:
+ 38   AI Dynamic LTV (vol-based)            2     ML (volatility) Innovation +5 🔥
+ 39   Loyalty-Based LTV Discount            1     —               UX +2
+ 40   Borrow APY Estimator                  1     —               UX +2
+
+БЛОК H — Yield:
+ 41   Supply APY + AI Utilization Target    1.5   AI (targeting)  Innovation +3
+ 42   Multi-Asset Collateral (roadmap)      1     —               Roadmap +1
+
+БЛОК I — AI Risk Intelligence:
+ 43   AI Preemptive Actions (6 signals)     1.5   ML + Gemini     Innovation +6 🔥🔥
+ 44   Risk Dashboard (всё в одном)          1.5   агрегация       UX +4
+────────────────────────────────────────────────────────────────
+                                     ИТОГО: ~14.5 часов
+```
+
+## Где ML/AI реально помогает (не ради галочки):
+
+```
+Фича                    Модель              Зачем AI, а не статика
+──────────────────────────────────────────────────────────────────
+Dynamic LTV             VolatilityModel     Статика: 150% всегда. AI: 130-200% по рынку
+Crash Detection         CrashDetector       Человек не мониторит 24/7, ML смотрит 6 сигналов
+Preemptive Actions      PreemptiveEngine    Обычный протокол ждёт. AI действует ДО проблемы
+Insurance Monitoring    Orchestrator        AI повышает rate когда фонд низкий
+Utilization Targeting   UtilPredictor       AI балансирует доход vs безопасность
+Fair Liquidation        RiskScorer          AI приоритизирует опасные позиции
+```
+
+## Обновлённый порядок реализации (все блоки)
+
+```
+ПРИОРИТЕТ 1 — "Must Have" (до дедлайна 7 апреля):
+  ✅ Блок A: Health Factor + Partial Liq (степ 22-23) — DONE
+  ✅ Блок B: AI Intelligence (степ 32-34) — DONE
+     Степ 35: Insurance Fund — 2ч
+     Степ 36: Circuit Breakers + Crash Detector — 2ч
+     Степ 38: AI Dynamic LTV — 2ч
+     Степ 21: SUBMIT — 1ч
+
+ПРИОРИТЕТ 2 — "Should Have" (если время есть):
+     Степ 43: AI Preemptive Actions — 1.5ч
+     Степ 44: Risk Dashboard — 1.5ч
+     Степ 39: Loyalty LTV — 1ч
+     Степ 41: Supply APY — 1.5ч
+
+ПРИОРИТЕТ 3 — "Nice to Have" (если ещё время):
+     Степ 28: Stealth Deposits — 2.5ч
+     Степ 37: Liquidation Queue — 1ч
+     Степ 40: Borrow Calculator — 1ч
+     Степ 42: Multi-Asset Roadmap — 1ч
+
+Если времени мало → 35 + 36 + 38 + 21 = 7 часов
+Insurance + Crash Protection + Dynamic LTV = winning combo
+```
