@@ -2225,3 +2225,643 @@ Fair Liquidation        RiskScorer          AI приоритизирует оп
 Если времени мало → 35 + 36 + 38 + 21 = 7 часов
 Insurance + Crash Protection + Dynamic LTV = winning combo
 ```
+
+---
+
+# ═══════════════════════════════════════════════════════════
+# БЛОК J-N: Resilience · Security · Oracle · MCP · Credit Score
+# ═══════════════════════════════════════════════════════════
+
+> **Контекст:** Colosseum Frontier (апрель 2026) — треки DeFi, AI and Crypto.
+> Победители прошлых хакатонов: Agent Arc (trading terminal), Yumi Finance (DeFi),
+> Synto (AI agent interface). Никто не делал AI-powered lending с MCP.
+> Наши главные дифференциаторы ниже.
+
+---
+
+## БЛОК J — "Resilience & Graceful Degradation" (3ч)
+
+> **Зачем:** Gemini API — single point of failure. Если лежит → агент встаёт.
+> Жюри спросит: "а что если Gemini упал?" Нужен fallback.
+
+---
+
+## Степ 45 — Gemini Fallback (AI работает без LLM)
+**Время:** ~1.5 часа
+**Приоритет:** ВЫСОКИЙ — устраняет главный single point of failure
+
+### Проблема
+
+Gemini API лежит / rate limit / 500 → `ai_engine.py` возвращает fallback с
+confidence=0 → validator отклоняет → агент пропускает цикл → протокол без управления.
+
+### Решение: 3-уровневый fallback
+
+```
+Уровень 1: Gemini доступен → полный pipeline (quant+ML+LLM) → confidence 70-90
+Уровень 2: Gemini недоступен → quant+ML решение без LLM → confidence 50-65
+Уровень 3: Всё мертво → on-chain auto-rate (степ 23) → контракт сам
+
+Переключение автоматическое. Юзер видит на фронте какой уровень активен.
+```
+
+**AI Agent (ai_engine.py) — добавить fallback logic:**
+```python
+async def get_decision(self, quant_report, pool_state):
+    try:
+        # Level 1: Full Gemini
+        result = await self._ask_gemini(quant_report, pool_state)
+        result["decision_source"] = "gemini"
+        return result
+    except Exception as e:
+        logger.warning(f"Gemini unavailable: {e}. Using ML-only fallback.")
+
+    # Level 2: ML-only decision
+    return self._ml_only_decision(quant_report, pool_state)
+
+def _ml_only_decision(self, quant, pool):
+    """Make decision using only quant+ML signals, no LLM."""
+    risk = quant["risk_score"]
+    util = pool["total_borrows"] / max(pool["total_deposits"], 1) * 100
+    trend = quant["trend_direction"]
+    current_rate = pool["interest_rate_bps"]
+
+    # Rule-based decision from ML signals
+    if util > 80:
+        new_rate = min(current_rate + 100, pool["max_interest_rate_bps"])
+        reasoning = f"High util {util:.0f}% → rate +1%"
+    elif util < 30 and trend == "down":
+        new_rate = max(current_rate - 50, pool["min_interest_rate_bps"])
+        reasoning = f"Low util {util:.0f}% + downtrend → rate -0.5%"
+    elif risk > 60:
+        new_rate = min(current_rate + 50, pool["max_interest_rate_bps"])
+        reasoning = f"Risk score {risk} → rate +0.5%"
+    else:
+        new_rate = current_rate
+        reasoning = "Signals normal, hold rate"
+
+    return {
+        "interest_rate_bps": new_rate,
+        "collateral_ratio_bps": pool["collateral_ratio_bps"],
+        "max_borrow_limit": pool["max_borrow_limit"],
+        "confidence": 55,  # lower than Gemini but above threshold
+        "risk_level": "medium" if risk > 40 else "low",
+        "reasoning_short": f"[ML-ONLY] {reasoning}",
+        "decision_source": "ml_fallback",
+    }
+```
+
+**Backend:** `GET /api/ai/status` → добавить `decision_source` поле
+
+**Frontend:**
+```
+Gemini Online:                    Gemini Down:
+┌── AI Engine ─────────┐        ┌── AI Engine ─────────────┐
+│ 🟢 Gemini + ML       │        │ 🟡 ML-Only Fallback     │
+│ Confidence: 75%      │        │ Confidence: 55%          │
+│ Full pipeline        │        │ Gemini: unreachable      │
+└──────────────────────┘        │ Using quant+ML signals   │
+                                 └──────────────────────────┘
+```
+
+### Для жюри:
+> "3 уровня resilience: Gemini → ML fallback → on-chain auto-rate.
+> Протокол НИКОГДА не останавливается. Даже если Gemini, бэкенд и AI сервер
+> полностью мертвы — контракт сам повысит ставку при высокой утилизации."
+
+---
+
+## Степ 46 — Adaptive Cooldown (двухуровневый)
+**Время:** ~1.5 часа
+**Приоритет:** ВЫСОКИЙ — уникальная фича, ни у кого нет
+
+### Проблема
+
+Фиксированный cooldown — компромисс:
+- Маленький (1 мин): быстрая реакция, но MEV-боты front-run'ят, ставки осциллируют
+- Большой (30 мин): стабильность, но медленная реакция на кризис
+- Aave: обновляет раз в неделю. Compound: раз в день. Оба слишком медленные для AI.
+
+### Решение: Adaptive Cooldown
+
+```
+НОРМАЛЬНЫЙ РЕЖИМ:
+  Cooldown: 10 мин
+  Max change: ±5% за обновление
+  Частота AI: каждые 2 мин (проверяет), обновляет когда cooldown позволяет
+
+КРИЗИСНЫЙ РЕЖИМ (автоматический):
+  Триггеры: volatility >10% за 5 мин ИЛИ utilization >90% ИЛИ crash_prob >70%
+  Cooldown: 2 мин
+  Max change: ±3% (жёстче чтобы не дёргать)
+  Auto-expire: возврат в нормальный через 30 мин без триггера
+```
+
+**Контракт (lib.rs):**
+```rust
+// Добавить в LendingPool:
+pub crisis_mode: bool,
+pub crisis_activated_at: i64,
+pub normal_cooldown: i64,    // 600 (10 min)
+pub crisis_cooldown: i64,    // 120 (2 min)
+
+// В update_parameters:
+fn effective_cooldown(pool: &LendingPool, now: i64) -> i64 {
+    if pool.crisis_mode {
+        // Auto-expire after 30 min
+        if now - pool.crisis_activated_at > 1800 {
+            return pool.normal_cooldown;
+        }
+        return pool.crisis_cooldown;
+    }
+    pool.normal_cooldown
+}
+
+// Новая инструкция: activate_crisis (AI agent only)
+pub fn activate_crisis(ctx: Context<UpdateParameters>) -> Result<()> {
+    let pool = &mut ctx.accounts.pool;
+    pool.crisis_mode = true;
+    pool.crisis_activated_at = Clock::get()?.unix_timestamp;
+    emit!(CrisisModeEvent { activated: true, timestamp: pool.crisis_activated_at });
+    Ok(())
+}
+```
+
+**AI Agent — решает когда активировать:**
+```python
+if crash_prob > 70 or utilization > 90 or volatility_5m > 0.10:
+    if not pool_state["crisis_mode"]:
+        await tx_builder.send_activate_crisis()
+        logger.critical(f"CRISIS MODE ACTIVATED: crash={crash_prob}% vol={volatility_5m}")
+```
+
+**Frontend:**
+```
+Нормально:                      Кризис:
+┌── Cooldown ──────────┐       ┌── Cooldown ────────────────┐
+│ Mode: Normal         │       │ ⚠ Mode: CRISIS            │
+│ Interval: 10 min     │       │ Interval: 2 min            │
+│ Max change: ±5%      │       │ Max change: ±3%            │
+│ Status: stable       │       │ Trigger: volatility 12%    │
+└──────────────────────┘       │ Expires in: 24 min         │
+                                └────────────────────────────┘
+```
+
+### Для жюри:
+> "Adaptive cooldown — протокол реагирует за 2 минуты в кризис, но стабилен
+> в нормальном режиме. Это то что Aave и Compound не могут — они обновляют
+> параметры вручную через governance. У нас AI переключает автоматически."
+
+---
+
+## БЛОК K — "Security & Production Hardening" (2ч)
+
+> **Зачем:** ai-agent.json — attack surface. Oracle через set_sol_price — централизован.
+> Для жюри важно показать что мы ЗНАЕМ о рисках и имеем план.
+
+---
+
+## Степ 47 — Security Considerations + Hardening
+**Время:** ~1 час
+**Приоритет:** ВЫСОКИЙ — показывает зрелость мышления
+
+### Что добавляем
+
+**1. README секция "Security Considerations":**
+```markdown
+## Security
+
+### AI Agent Keypair
+- On devnet: plain JSON file (`keys/ai-agent.json`)
+- On mainnet: HSM (Hardware Security Module) or multisig required
+- Agent can ONLY: update_parameters, set_sol_price, liquidate
+- Agent CANNOT: withdraw funds, close accounts, change authority
+- Mitigation: role separation (Step 26), viewing keys (Step 29)
+
+### Oracle
+- Devnet: AI agent sets price via CoinGecko → set_sol_price
+- Mainnet plan: Pyth Oracle on-chain (Step 25) with 3-level fallback
+- Staleness check: price older than 5 min → operations paused
+
+### Guard Rails (5 layers)
+1. AI Prompt constraints (system prompt limits)
+2. Python Validator (bounds check before TX)
+3. On-chain limits (min/max rate, max change per update)
+4. Emergency freeze (AI or authority)
+5. Auto-rate (contract acts without AI)
+
+### Known Limitations (devnet)
+- No audit performed
+- Single oracle source (CoinGecko via AI)
+- AI agent keypair not in HSM
+- No rate limiting on RPC calls
+```
+
+**2. Agent keypair rotation script:**
+```python
+# scripts/rotate_ai_key.py
+# Генерирует новый ключ, обновляет on-chain через set_roles, деплоит
+# Для демо/README — показывает что мы думаем о key management
+```
+
+**3. Frontend — Security Status на System page:**
+```
+┌── Security ──────────────────────────────────┐
+│ AI Agent permissions: update_params, price   │
+│ AI Agent CANNOT: withdraw, transfer, close   │
+│ Guard Rails: 5 layers active ✅              │
+│ Oracle: CoinGecko → AI → on-chain          │
+│ Keypair: file-based (devnet)                 │
+│ Mainnet plan: HSM + Pyth + audit            │
+└──────────────────────────────────────────────┘
+```
+
+---
+
+## Степ 48 — Pyth Oracle Integration (цены без доверия к AI)
+**Время:** ~1 час (scaffold + README)
+**Приоритет:** СРЕДНИЙ — показывает production мышление
+
+### Решение: Multi-oracle с fallback
+
+```
+Priority 1: Pyth Oracle (on-chain, децентрализованный)
+  → Контракт читает PriceUpdateV2 напрямую
+  → Staleness: reject if >5 min old
+
+Priority 2: AI Agent (CoinGecko → set_sol_price)
+  → Fallback если Pyth stale
+  → AI обновляет каждый цикл
+
+Priority 3: Last known price + WARNING
+  → Если оба стейл >1 час → freeze pool
+
+Frontend показывает источник:
+  SOL: $80.21 — Source: 🟢 Pyth (2 sec ago)
+  SOL: $80.21 — Source: 🟡 AI/CoinGecko (45 sec ago)
+  SOL: $79.50 — Source: 🔴 STALE (12 min) ⚠ Operations limited
+```
+
+**Для хакатона:** scaffold код + Pyth devnet feed address + README секция.
+Полная интеграция — post-hackathon.
+
+---
+
+## БЛОК L — "MCP Integration" (3ч)
+
+> **Зачем:** MCP (Model Context Protocol) — горячий тренд Solana экосистемы.
+> Colosseum Agent Hackathon (февраль 2026) был целиком про MCP-агентов.
+> Ни один lending протокол не имеет MCP-сервера.
+
+---
+
+## Степ 49 — MCP Server для протокола
+**Время:** ~2 часа
+**Приоритет:** ВЫСОКИЙ — уникальная фича, в тренде Frontier хакатона
+
+### Что это
+
+MCP-сервер позволяет любому AI-агенту (Claude, GPT, custom) взаимодействовать
+с твоим протоколом через natural language.
+
+### Реализация
+
+```
+mcp-server/
+  ├── server.py          # FastAPI MCP endpoint
+  ├── tools.py           # MCP tool definitions
+  └── README.md
+
+MCP Tools (что агент может делать):
+  1. get_pool_stats()     → текущие ставки, утилизация, TVL
+  2. get_my_position()    → баланс, collateral, health factor
+  3. simulate_borrow()    → "что будет если я займу $1000?"
+  4. get_ai_reasoning()   → последнее решение AI с объяснением
+  5. get_risk_assessment() → текущий risk score + рекомендации
+```
+
+**server.py:**
+```python
+from fastapi import FastAPI
+from mcp import MCPServer, Tool
+
+app = FastAPI()
+mcp = MCPServer(app, name="solana-ai-lend")
+
+@mcp.tool("get_pool_stats")
+async def pool_stats():
+    """Get current lending pool statistics."""
+    stats = await solana_reader.get_pool_state()
+    return {
+        "deposit_rate": f"{stats['interest_rate_bps'] / 100}%",
+        "utilization": f"{stats['utilization']:.1f}%",
+        "total_deposits": f"${stats['total_deposits'] / 1e6:.0f}",
+        "sol_price": f"${stats['sol_price_usd'] / 1e6:.2f}",
+        "ai_mood": stats["current_mood"],
+    }
+
+@mcp.tool("simulate_borrow")
+async def simulate_borrow(amount_usd: float):
+    """Simulate what happens if you borrow this amount."""
+    stats = await solana_reader.get_pool_state()
+    rate = stats["interest_rate_bps"] / 10000
+    daily_cost = amount_usd * rate / 365
+    collateral_needed = amount_usd * 1.2 / (stats["sol_price_usd"] / 1e6)
+    return {
+        "borrow_amount": f"${amount_usd}",
+        "daily_cost": f"${daily_cost:.2f}",
+        "monthly_cost": f"${daily_cost * 30:.2f}",
+        "collateral_needed": f"{collateral_needed:.2f} SOL",
+        "current_rate": f"{rate * 100:.2f}%",
+    }
+```
+
+**Демо:**
+```
+User → Claude: "Какие сейчас ставки в SolanaAI Lend?"
+Claude → MCP → get_pool_stats() → "Ставка 3.2%, утилизация 45%, TVL $1730"
+
+User → Claude: "Что будет если я займу $500?"
+Claude → MCP → simulate_borrow(500) → "Ежедневно $0.04, нужен залог 7.5 SOL"
+```
+
+### Для жюри:
+> "Первый lending протокол с MCP-сервером. Любой AI-агент может
+> взаимодействовать с нашим протоколом через natural language.
+> Claude, GPT, custom agents — все могут проверить позицию,
+> симулировать borrow, получить AI reasoning."
+
+---
+
+## Степ 50 — MCP Wallet Actions (deposit/borrow через агента)
+**Время:** ~1 час
+**Приоритет:** СРЕДНИЙ — расширение MCP для транзакций
+
+### Дополнительные MCP tools:
+
+```python
+@mcp.tool("deposit")
+async def deposit(amount_usd: float, wallet: str):
+    """Deposit aiUSDC into the lending pool."""
+    # Build unsigned TX → return for user to sign
+    tx = build_deposit_tx(wallet, amount_usd)
+    return {"unsigned_tx": tx.to_base64(), "action": "deposit", "amount": amount_usd}
+
+@mcp.tool("add_collateral")
+async def add_collateral(sol_amount: float, wallet: str):
+    """Add SOL collateral to your position."""
+    tx = build_collateral_tx(wallet, sol_amount)
+    return {"unsigned_tx": tx.to_base64(), "action": "add_collateral", "amount": sol_amount}
+```
+
+**Безопасность:** MCP возвращает unsigned TX → юзер подписывает в кошельке.
+Агент НЕ имеет доступ к приватным ключам.
+
+---
+
+## БЛОК M — "AI Credit Score & Predictions" (3ч)
+
+> **Зачем:** Персонализированный DeFi — то чего нет ни у кого на Solana.
+> AI анализирует on-chain историю и даёт индивидуальные условия.
+
+---
+
+## Степ 51 — AI Credit Score (on-chain репутация)
+**Время:** ~2 часа
+**Приоритет:** ВЫСОКИЙ — уникальная фича, ни один хакатон-проект не делает
+
+### Проблема
+
+Все юзеры получают одинаковые условия. Новичок с первой транзакцией и
+кит с 500 операциями, который НИКОГДА не ликвидировался — один rate.
+В TradFi это немыслимо.
+
+### Решение: On-chain Credit Score
+
+AI анализирует историю кошелька и выдаёт score 0-100:
+
+```
+Факторы:
+  - Возраст первой транзакции (max 20 pts)
+  - Количество успешных repay (max 20 pts)
+  - Ratio repay/borrow — всегда возвращает вовремя? (max 20 pts)
+  - Никогда не ликвидировался (20 pts, теряешь при ликвидации)
+  - Размер позиции (большие депозиты = skin in the game) (max 10 pts)
+  - Cross-protocol history (были ли ликвидации на Marginfi/Kamino) (max 10 pts)
+
+Score    Tier        Collateral Discount    Rate Discount
+─────────────────────────────────────────────────────────
+90-100   Platinum    -15%                   -10%
+70-89    Gold        -10%                   -5%
+50-69    Silver      -5%                    -2%
+0-49     Bronze      0% (стандарт)          0%
+```
+
+**Backend:**
+```python
+# GET /api/credit-score/{wallet}
+async def get_credit_score(wallet: str):
+    # 1. Fetch on-chain position data
+    position = await reader.get_user_position(wallet)
+    
+    # 2. Calculate score factors
+    age_score = min(20, days_since_first_tx / 30 * 20)
+    repay_score = min(20, position.total_repays * 2)
+    ratio_score = 20 if position.total_repays >= position.total_borrows * 0.8 else 10
+    no_liq_score = 20 if position.liquidation_count == 0 else 0
+    size_score = min(10, position.deposited / 1000 * 10)
+    
+    total = age_score + repay_score + ratio_score + no_liq_score + size_score
+    
+    return {
+        "wallet": wallet,
+        "score": total,
+        "tier": "Platinum" if total >= 90 else "Gold" if total >= 70 else ...,
+        "collateral_discount_pct": discount,
+        "factors": { ... }
+    }
+```
+
+**Frontend — Credit Score виджет:**
+```
+┌── Your Credit Score ──────────────────────────┐
+│                                                │
+│           🏆 78 / 100 — Gold                  │
+│     ████████████████░░░░░                      │
+│                                                │
+│  Account age:      ██████████████ 18/20       │
+│  Repay history:    ████████████░░ 16/20       │
+│  Repay ratio:      ████████████████████ 20/20 │
+│  No liquidations:  ████████████████████ 20/20 │
+│  Position size:    ████░░░░░░░░░░  4/10       │
+│                                                │
+│  Your benefits:                                │
+│  ✅ Collateral: 150% → 135% (-10%)           │
+│  ✅ Borrow rate: 5.0% → 4.75% (-5%)          │
+│                                                │
+│  Next tier (Platinum): need 12 more points    │
+│  Tip: deposit more to increase size score     │
+└────────────────────────────────────────────────┘
+```
+
+### Для жюри:
+> "Первый on-chain credit score в Solana DeFi. AI анализирует историю
+> кошелька и даёт персонализированные условия. Надёжные юзеры платят
+> меньше. Это как кредитная история, но прозрачная и on-chain."
+
+---
+
+## Степ 52 — Liquidation Predictor + Soft Warnings
+**Время:** ~1 час
+**Приоритет:** СРЕДНИЙ — "friendly DeFi" нарратив
+
+### Решение
+
+AI предсказывает вероятность ликвидации на 1h/4h/24h.
+Если >50% → WebSocket warning + предложение добавить collateral.
+
+**Backend:**
+```python
+# В health_monitor:
+async def predict_liquidation(position, pool, crash_detector):
+    health = position.health_factor
+    vol = crash_detector.current_volatility
+    
+    # Monte Carlo: simulate 1000 price paths
+    liquidation_probs = {"1h": 0, "4h": 0, "24h": 0}
+    for horizon, hours in [("1h", 1), ("4h", 4), ("24h", 24)]:
+        count = 0
+        for _ in range(1000):
+            price_change = np.random.normal(0, vol * np.sqrt(hours))
+            new_health = health * (1 + price_change)
+            if new_health < 1.0:
+                count += 1
+        liquidation_probs[horizon] = count / 10  # percentage
+    
+    return liquidation_probs
+```
+
+**Frontend — warning на Dashboard:**
+```
+Нормально:                          Опасно:
+(ничего не показываем)              ┌── ⚠ Liquidation Risk ────────┐
+                                     │ Probability:                  │
+                                     │   1h:  8%   ██░░░░░░░░       │
+                                     │   4h:  23%  █████░░░░░       │
+                                     │   24h: 61%  ████████████░    │
+                                     │                               │
+                                     │ Recommended:                  │
+                                     │ [Add 2 SOL Collateral]        │
+                                     │ [Repay $200]                  │
+                                     └──────────────────────────────┘
+```
+
+---
+
+## БЛОК N — "Competitive Edge & Testing" (2ч)
+
+---
+
+## Степ 53 — Multi-Pool AI Competition (roadmap)
+**Время:** ~0.5 часа (презентация + scaffold)
+**Приоритет:** НИЗКИЙ — roadmap для жюри
+
+### Идея
+
+Несколько пулов с разными AI-стратегиями:
+```
+Pool A: Conservative AI — low risk, low yield (3-5% APY)
+Pool B: Balanced AI     — medium risk, medium yield (5-8% APY)
+Pool C: Aggressive AI   — high risk, high yield (8-15% APY)
+```
+
+Юзер выбирает по risk appetite. AI-агенты "соревнуются" — performance tracking on-chain.
+Для хакатона: scaffold + слайд.
+
+---
+
+## Степ 54 — E2E Tests + Frontend Tests
+**Время:** ~1.5 часа
+**Приоритет:** СРЕДНИЙ — completeness
+
+### Что добавляем
+
+```
+tests/e2e/
+  ├── full-flow.test.ts    — deposit → borrow → AI update → repay → withdraw
+  ├── liquidation.test.ts  — borrow → price drop → liquidation → keeper reward
+  └── multi-user.test.ts   — 3 users interact simultaneously
+
+frontend/
+  └── cypress/ или playwright/
+      ├── dashboard.spec.ts   — loads, shows stats, health factor
+      ├── activity.spec.ts    — pagination, load more
+      └── ai-decisions.spec.ts — shows decisions, risk filter
+```
+
+---
+
+## Финальная сводка: Степы 45-54
+
+```
+Степ  Что                                  Часы  AI/ML?  Баллы
+────────────────────────────────────────────────────────────────
+
+БЛОК J — Resilience:
+ 45   Gemini Fallback (ML-only mode)        1.5   ML rules     Technical +4 🔥
+ 46   Adaptive Cooldown (crisis mode)       1.5   AI triggers  Innovation +5 🔥🔥
+
+БЛОК K — Security & Oracle:
+ 47   Security Considerations + README      1     —            Docs +3
+ 48   Pyth Oracle scaffold + multi-oracle   1     —            Technical +2
+
+БЛОК L — MCP Integration:
+ 49   MCP Server (read-only tools)          2     —            Innovation +6 🔥🔥
+ 50   MCP Wallet Actions (TX builder)       1     —            Innovation +3
+
+БЛОК M — AI Credit Score:
+ 51   On-chain Credit Score                 2     ML scoring   Innovation +7 🔥🔥🔥
+ 52   Liquidation Predictor + Warnings      1     ML predict   Innovation +4 🔥
+
+БЛОК N — Testing & Roadmap:
+ 53   Multi-Pool Competition (roadmap)      0.5   —            Roadmap +1
+ 54   E2E + Frontend Tests                  1.5   —            Technical +2
+────────────────────────────────────────────────────────────────
+                                     ИТОГО: ~13 часов
+
+ГДЕ AI РЕАЛЬНО НУЖЕН:
+  45: ML-only fallback — когда Gemini лежит, ML принимает решения
+  46: AI триггер кризиса — AI решает когда переключить cooldown
+  51: Credit Score — ML скорит кошельки по on-chain истории
+  52: Liquidation Predictor — Monte Carlo симуляция ценовых путей
+```
+
+## Обновлённый полный порядок (все блоки A-N)
+
+```
+MUST HAVE (до дедлайна):
+  ✅ A: Health Factor + Partial Liq (22-23)
+  ✅ B: AI Intelligence (32-34)
+  ✅ F: Insurance + Crash Protection (35-36)
+     45: Gemini Fallback — 1.5ч
+     46: Adaptive Cooldown — 1.5ч
+     49: MCP Server — 2ч
+     47: Security README — 1ч
+     21: SUBMIT — 1ч
+
+SHOULD HAVE:
+     51: Credit Score — 2ч
+     38: Dynamic LTV — 2ч
+     43: Preemptive Actions — 1.5ч
+     44: Risk Dashboard — 1.5ч
+     52: Liquidation Predictor — 1ч
+
+NICE TO HAVE:
+     50: MCP Actions — 1ч
+     48: Pyth Oracle — 1ч
+     53: Multi-Pool roadmap — 0.5ч
+     54: E2E Tests — 1.5ч
+
+Минимум для победы: 45 + 46 + 49 + 47 + 21 = 7 часов
+Gemini Fallback + Adaptive Cooldown + MCP + Security = УНИКАЛЬНОСТЬ
+```
