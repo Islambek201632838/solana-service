@@ -14,10 +14,17 @@ from config import Settings
 def run_orchestrator(settings: Settings):
     """Process 1: Main AI agent (asyncio event loop)."""
     import asyncio
+    import traceback
+    import sys
     from agent.orchestrator import Orchestrator
 
-    orchestrator = Orchestrator(settings)
-    asyncio.run(orchestrator.start())
+    try:
+        orchestrator = Orchestrator(settings)
+        asyncio.run(orchestrator.start())
+    except Exception as e:
+        print(f"[ORCHESTRATOR] FATAL: {e}", flush=True)
+        traceback.print_exc()
+        sys.exit(1)
 
 
 def run_health_monitor(settings: Settings):

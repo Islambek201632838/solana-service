@@ -93,6 +93,8 @@ services:
     environment:
       - ANCHOR_PROVIDER_URL=https://api.devnet.solana.com
       - ANCHOR_WALLET=/app/keys/deployer.json
+      - BACKEND_URL=http://backend:8000
+      - CYCLE_MINUTES=3
     volumes:
       - ../keys:/app/keys:ro
     depends_on:

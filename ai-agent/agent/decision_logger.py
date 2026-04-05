@@ -9,6 +9,8 @@ import os
 class DecisionLogger:
     def __init__(self, db_path: str = os.environ.get("DECISIONS_DB_PATH", "decisions.db")):
         self.db_path = db_path
+        # Ensure parent directory exists
+        os.makedirs(os.path.dirname(db_path) if os.path.dirname(db_path) else ".", exist_ok=True)
 
     async def _connect(self) -> aiosqlite.Connection:
         db = await aiosqlite.connect(self.db_path)

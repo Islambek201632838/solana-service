@@ -307,6 +307,17 @@ pub mod solana_ai_lend {
         Ok(())
     }
 
+    /// Fix corrupted last_update timestamp (authority only, one-time migration fix)
+    pub fn fix_pool_timestamp(ctx: Context<EmergencyFreeze>, new_cooldown: Option<i64>) -> Result<()> {
+        let pool = &mut ctx.accounts.pool;
+        if let Some(cd) = new_cooldown {
+            pool.update_cooldown = cd.max(30); // min 30 sec
+        }
+        let now = Clock::get()?.unix_timestamp;
+        pool.last_update = now - pool.update_cooldown - 1;
+        Ok(())
+    }
+
     // Step 33: Initialize guardrail config PDA
     pub fn init_guardrails(ctx: Context<InitGuardrails>, params: GuardrailParams) -> Result<()> {
         let config = &mut ctx.accounts.guardrail_config;
