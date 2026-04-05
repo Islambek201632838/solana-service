@@ -72,6 +72,15 @@ pub mod solana_ai_lend {
         pool.withdrawn_this_epoch = 0;
         pool.current_epoch = 0;
 
+        // Step 46: Adaptive Cooldown
+        pool.crisis_mode = false;
+        pool.crisis_activated_at = 0;
+        pool.normal_cooldown = 600;
+        pool.crisis_cooldown = 120;
+
+        // Step 26: Role separation
+        pool.keeper_authority = ctx.accounts.authority.key(); // default = authority
+
         pool.bump = ctx.bumps.pool;
         pool.vault_bump = ctx.bumps.pool_vault;
 
@@ -112,9 +121,19 @@ pub mod solana_ai_lend {
         require!(!pool.is_frozen, LendError::ProtocolFrozen);
         let now = Clock::get()?.unix_timestamp;
 
-        // Cooldown check
+        // Adaptive cooldown (Step 46): crisis mode uses shorter cooldown
+        let effective_cooldown = if pool.crisis_mode {
+            // Auto-expire crisis after 30 min
+            if now.saturating_sub(pool.crisis_activated_at) > 1800 {
+                pool.update_cooldown // expired, use normal
+            } else {
+                pool.crisis_cooldown.max(30) // crisis cooldown, min 30s
+            }
+        } else {
+            pool.update_cooldown
+        };
         let elapsed = now.checked_sub(pool.last_update).ok_or(LendError::MathOverflow)?;
-        require!(elapsed >= pool.update_cooldown, LendError::CooldownActive);
+        require!(elapsed >= effective_cooldown, LendError::CooldownActive);
 
         // Rate bounds
         require!(params.new_interest_rate_bps >= pool.min_interest_rate_bps, LendError::RateTooLow);
@@ -333,11 +352,18 @@ pub mod solana_ai_lend {
         Ok(())
     }
 
-    /// Fix corrupted last_update timestamp (authority only, one-time migration fix)
+    /// Fix pool timing + crisis fields (authority only, migration utility)
     pub fn fix_pool_timestamp(ctx: Context<EmergencyFreeze>, new_cooldown: Option<i64>) -> Result<()> {
         let pool = &mut ctx.accounts.pool;
         if let Some(cd) = new_cooldown {
-            pool.update_cooldown = cd.max(30); // min 30 sec
+            pool.update_cooldown = cd.max(30);
+        }
+        // Fix crisis fields if corrupted
+        if pool.normal_cooldown <= 0 || pool.normal_cooldown > 3600 {
+            pool.normal_cooldown = 600; // 10 min default
+        }
+        if pool.crisis_cooldown <= 0 || pool.crisis_cooldown > 600 {
+            pool.crisis_cooldown = 120; // 2 min default
         }
         let now = Clock::get()?.unix_timestamp;
         pool.last_update = now - pool.update_cooldown - 1;
@@ -361,6 +387,60 @@ pub mod solana_ai_lend {
             timestamp: Clock::get()?.unix_timestamp,
         });
 
+        Ok(())
+    }
+
+    /// Step 46: Activate crisis mode (AI agent or authority)
+    pub fn activate_crisis(ctx: Context<EmergencyFreeze>) -> Result<()> {
+        let pool = &mut ctx.accounts.pool;
+        let now = Clock::get()?.unix_timestamp;
+        pool.crisis_mode = true;
+        pool.crisis_activated_at = now;
+        emit!(CrisisModeEvent { pool: pool.key(), activated: true, timestamp: now });
+        Ok(())
+    }
+
+    /// Step 46: Deactivate crisis mode (authority only)
+    pub fn deactivate_crisis(ctx: Context<EmergencyFreeze>) -> Result<()> {
+        let pool = &mut ctx.accounts.pool;
+        pool.crisis_mode = false;
+        emit!(CrisisModeEvent { pool: pool.key(), activated: false, timestamp: Clock::get()?.unix_timestamp });
+        Ok(())
+    }
+
+    /// Step 31: Initiate position transfer (seller side)
+    pub fn transfer_position(ctx: Context<TransferPosition>, new_owner: Pubkey) -> Result<()> {
+        let position = &mut ctx.accounts.user_position;
+        require!(position.borrowed == 0 && position.accrued_interest == 0, LendError::HasActiveBorrow);
+        require!(position.pending_transfer == Pubkey::default(), LendError::TransferAlreadyPending);
+        position.pending_transfer = new_owner;
+        emit!(PositionTransferEvent {
+            pool: position.pool,
+            from: position.owner,
+            to: new_owner,
+            initiated: true,
+            timestamp: Clock::get()?.unix_timestamp,
+        });
+        Ok(())
+    }
+
+    /// Step 31: Cancel pending transfer (seller side)
+    pub fn cancel_transfer(ctx: Context<TransferPosition>) -> Result<()> {
+        let position = &mut ctx.accounts.user_position;
+        require!(position.pending_transfer != Pubkey::default(), LendError::NoTransferPending);
+        position.pending_transfer = Pubkey::default();
+        Ok(())
+    }
+
+    /// Step 26: Set protocol roles (authority only)
+    pub fn set_roles(ctx: Context<EmergencyFreeze>, new_ai_agent: Option<Pubkey>, new_keeper: Option<Pubkey>) -> Result<()> {
+        let pool = &mut ctx.accounts.pool;
+        if let Some(ai) = new_ai_agent {
+            pool.ai_agent = ai;
+        }
+        if let Some(keeper) = new_keeper {
+            pool.keeper_authority = keeper;
+        }
         Ok(())
     }
 
@@ -1133,9 +1213,18 @@ pub struct LendingPool {
     pub total_bad_debt_covered: u64,   // lifetime bad debt covered
 
     // Step 36: Withdrawal rate limit
-    pub max_withdraw_per_epoch: u64,   // max withdrawal per epoch (0 = unlimited)
+    pub max_withdraw_per_epoch: u64,
     pub withdrawn_this_epoch: u64,
     pub current_epoch: u64,
+
+    // Step 46: Adaptive Cooldown
+    pub crisis_mode: bool,
+    pub crisis_activated_at: i64,
+    pub normal_cooldown: i64,    // default 600
+    pub crisis_cooldown: i64,    // default 120
+
+    // Step 26: Role separation
+    pub keeper_authority: Pubkey, // separate key for keepers (default = authority)
 
     pub bump: u8,
     pub vault_bump: u8,
@@ -1172,6 +1261,8 @@ pub struct UserPosition {
     pub first_deposit_at: i64,
     pub loyalty_tier: LoyaltyTier,
     pub total_operations: u32,
+    // Step 31: Position Transfer
+    pub pending_transfer: Pubkey, // Pubkey::default() = no pending transfer
     pub bump: u8,
 }
 
@@ -1668,6 +1759,21 @@ pub struct GetHealthFactor<'info> {
     pub user_position: Account<'info, UserPosition>,
 }
 
+// Step 31: Position Transfer accounts
+#[derive(Accounts)]
+pub struct TransferPosition<'info> {
+    #[account(
+        mut,
+        seeds = [b"position", user_position.pool.as_ref(), owner.key().as_ref()],
+        bump = user_position.bump,
+        has_one = owner,
+    )]
+    pub user_position: Account<'info, UserPosition>,
+
+    #[account(mut)]
+    pub owner: Signer<'info>,
+}
+
 // ============================================================
 // EVENTS
 // ============================================================
@@ -1830,6 +1936,24 @@ pub struct BadDebtCoveredEvent {
     pub timestamp: i64,
 }
 
+// Step 46: Crisis mode event
+#[event]
+pub struct CrisisModeEvent {
+    pub pool: Pubkey,
+    pub activated: bool,
+    pub timestamp: i64,
+}
+
+// Step 31: Position transfer event
+#[event]
+pub struct PositionTransferEvent {
+    pub pool: Pubkey,
+    pub from: Pubkey,
+    pub to: Pubkey,
+    pub initiated: bool,
+    pub timestamp: i64,
+}
+
 // ============================================================
 // ERRORS
 // ============================================================
@@ -1884,4 +2008,8 @@ pub enum LendError {
     WithdrawalLimitExceeded,
     #[msg("Insufficient insurance fund balance")]
     InsufficientInsurance,
+    #[msg("Position transfer already pending")]
+    TransferAlreadyPending,
+    #[msg("No transfer pending for this position")]
+    NoTransferPending,
 }
