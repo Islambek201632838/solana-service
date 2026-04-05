@@ -51,6 +51,10 @@ class Orchestrator:
         self.crash_detector = CrashDetector()
         self.preemptive = PreemptiveEngine()
 
+        # Utilization trend tracking (last N readings)
+        self._util_history: list[float] = []
+        self._max_util_history = 10
+
     async def start(self):
         """Main loop — runs AI cycle every interval."""
         await self.logger.init_db()
@@ -154,6 +158,22 @@ class Orchestrator:
         if preemptive_actions:
             print(f"[CYCLE] Preemptive: {self.preemptive.summarize(preemptive_actions)}")
 
+        # 3d. Track utilization trend
+        utilization = pool.get("utilization", 0)
+        self._util_history.append(utilization)
+        if len(self._util_history) > self._max_util_history:
+            self._util_history = self._util_history[-self._max_util_history:]
+
+        util_trend = "stable"
+        if len(self._util_history) >= 3:
+            recent = self._util_history[-3:]
+            if recent[-1] > recent[0] + 0.05:
+                util_trend = "rising"
+            elif recent[-1] < recent[0] - 0.05:
+                util_trend = "falling"
+        if util_trend != "stable":
+            print(f"[CYCLE] Utilization trend: {util_trend} ({[f'{u:.1%}' for u in self._util_history[-3:]]})")
+
         # 4. Utilization curve
         utilization = pool.get("utilization", 0)
         util_rec = calc_optimal_rate(utilization)
@@ -175,6 +195,8 @@ class Orchestrator:
         report["sol_price_source"] = "coingecko" if ctx["market"].get("sol_price", 0) > 0 else "onchain"
         report["crash"] = report_crash
         report["preemptive_actions"] = preemptive_actions
+        report["util_trend"] = util_trend
+        report["util_history"] = [round(u, 4) for u in self._util_history[-5:]]
 
         # 5b. Sentiment analysis (async — runs Gemini separately)
         try:
@@ -212,8 +234,17 @@ class Orchestrator:
 
         print("[CYCLE] Validation PASSED")
 
-        # 8. Send TX
+        # 8. Update SOL price FIRST (always, independent of cooldown)
         pool_authority_pubkey = Pubkey.from_string(self.settings.pool_authority)
+        if sol_price > 0:
+            price_micro = int(sol_price * 1_000_000)
+            price_tx = await self.tx_builder.send_set_sol_price(
+                pool_authority_pubkey, price_micro
+            )
+            if price_tx:
+                print(f"[CYCLE] SOL price updated: ${sol_price:.2f}")
+
+        # 9. Send update_parameters TX
         update_number = pool.get("total_ai_updates", 0)
         tx_sig = await self.tx_builder.send_update_parameters(
             pool_authority_pubkey, decision, update_number
@@ -223,24 +254,9 @@ class Orchestrator:
             print(f"[CYCLE] TX sent: {tx_sig}")
             await self.logger.log_decision(pool, decision, report, tx_sig, "confirmed")
         else:
-            print("[CYCLE] TX failed")
-            # Don't save failed TX — only confirmed ones matter
+            print("[CYCLE] TX failed (cooldown or other)")
 
-        # ==========================================
-        # 9. AI Active Actions
-        # ==========================================
-
-        # 9a. Update SOL price on-chain
-        if sol_price > 0:
-            price_micro = int(sol_price * 1_000_000)  # store as micro-USD
-            price_tx = await self.tx_builder.send_set_sol_price(
-                pool_authority_pubkey, price_micro
-            )
-            if price_tx:
-                print(f"[CYCLE] SOL price updated on-chain: ${sol_price:.2f}")
-                report["price_updated_onchain"] = True
-
-        # 9b. AI Emergency Freeze if risk critical
+        # 10. AI Emergency Freeze if risk critical
         risk_score = ml_signals.get("risk_score", 0)
         is_anomaly = ml_signals.get("anomaly", {}).get("is_anomaly", False)
         if risk_score > 90 or (is_anomaly and risk_score > 70):

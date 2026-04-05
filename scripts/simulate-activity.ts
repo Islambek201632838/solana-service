@@ -132,61 +132,44 @@ async function main() {
 
       console.log(`[${ts}] #${cycle} ${user.name}: util=${util.toFixed(1)}% borr=$${borrows.toFixed(0)} liq=$${liquidity.toFixed(0)} maxBorr=$${maxBorrow.toFixed(0)}`);
 
-      // ===== SMART STRATEGY: target 30-70% utilization =====
+      // ===== CHAOTIC STRATEGY: unpredictable swings =====
+      // Sometimes big borrows, sometimes big repays — creates volatility
+      // AI must react to changing utilization
       let action: string;
       let amount: number;
       const dice = Math.random();
+      const mood = Math.random(); // 0-0.3 = bearish (repay), 0.3-0.7 = mixed, 0.7-1.0 = bullish (borrow)
 
-      if (util < 20) {
-        // WAY TOO LOW → aggressive borrow (80% chance)
-        if (dice < 0.8) {
-          action = "borrow";
-          // Borrow big chunk to push utilization up
-          const targetBorrow = deposits * 0.15; // try to add 15% utilization
-          amount = Math.min(Math.floor(targetBorrow), Math.floor(maxBorrow), Math.floor(liquidity * 0.8));
-        } else {
-          action = "borrow";
-          amount = Math.min(rand(50, 150), Math.floor(maxBorrow), Math.floor(liquidity));
-        }
-      } else if (util < 35) {
-        // LOW → borrow (70%)
-        if (dice < 0.7) {
-          action = "borrow";
-          const targetBorrow = deposits * 0.08;
-          amount = Math.min(Math.floor(targetBorrow), Math.floor(maxBorrow), Math.floor(liquidity * 0.6));
-        } else {
-          action = "repay";
-          amount = Math.min(rand(10, 30), borrowed);
-        }
-      } else if (util < 55) {
-        // OPTIMAL ZONE → mix of borrow/repay (slight borrow bias)
-        if (dice < 0.55) {
-          action = "borrow";
-          amount = Math.min(rand(20, 80), Math.floor(maxBorrow), Math.floor(liquidity * 0.4));
-        } else {
-          action = "repay";
-          amount = Math.min(rand(15, 50), borrowed);
-        }
-      } else if (util < 75) {
-        // HIGH → lean repay (60%)
-        if (dice < 0.6) {
-          action = "repay";
-          amount = Math.min(rand(30, 100), borrowed);
-        } else {
-          action = "borrow";
-          amount = Math.min(rand(10, 40), Math.floor(maxBorrow), Math.floor(liquidity * 0.3));
-        }
+      // Safety: force repay if util > 85%
+      if (util > 85 && borrowed > 0) {
+        action = "repay";
+        amount = Math.min(rand(50, 200), borrowed);
+      }
+      // Safety: force borrow if util < 5%
+      else if (util < 5) {
+        action = "borrow";
+        amount = Math.min(rand(50, 200), Math.floor(maxBorrow), Math.floor(liquidity * 0.5));
+      }
+      // Chaotic behavior
+      else if (mood > 0.85) {
+        // WHALE BORROW — big amount, pushes util up fast
+        action = "borrow";
+        amount = Math.min(rand(100, 300), Math.floor(maxBorrow), Math.floor(liquidity * 0.6));
+      } else if (mood < 0.15 && borrowed > 0) {
+        // WHALE REPAY — big repay, drops util fast
+        action = "repay";
+        amount = Math.min(rand(100, 300), borrowed);
+      } else if (dice < 0.5) {
+        // Normal borrow
+        action = "borrow";
+        amount = Math.min(rand(10, 80), Math.floor(maxBorrow), Math.floor(liquidity * 0.4));
+      } else if (borrowed > 0) {
+        // Normal repay
+        action = "repay";
+        amount = Math.min(rand(10, 60), borrowed);
       } else {
-        // DANGER ZONE >75% → force repay (90%)
-        if (dice < 0.9) {
-          action = "repay";
-          const targetRepay = borrows * 0.1; // repay 10% of borrows
-          amount = Math.min(Math.floor(targetRepay), borrowed);
-          if (amount < 5) amount = Math.min(rand(30, 80), borrowed);
-        } else {
-          action = "borrow";
-          amount = Math.min(rand(5, 20), Math.floor(maxBorrow), Math.floor(liquidity * 0.1));
-        }
+        action = "borrow";
+        amount = Math.min(rand(20, 60), Math.floor(maxBorrow), Math.floor(liquidity * 0.3));
       }
 
       // Ensure minimum amount
@@ -236,8 +219,8 @@ async function main() {
       console.log(`  ${user.name} fetch error: ${e.message?.slice(0, 80)}`);
     }
 
-    const jitter = rand(-30, 30) * 1000; // ±30 sec randomness
-    const waitMs = CYCLE_MS + jitter;
+    // Random interval 1-5 min for chaotic timing
+    const waitMs = rand(60, 300) * 1000;
     console.log(`  Next in ${(waitMs / 60000).toFixed(1)} min...\n`);
     await sleep(waitMs);
   }

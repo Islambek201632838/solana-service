@@ -64,6 +64,10 @@ class AiEngine:
 - Оптимальная ставка по формуле Aave: {report.get('optimal_rate_bps', 500)} bps ({report.get('optimal_rate_bps', 500) / 100}%) ← ОРИЕНТИРУЙСЯ НА ЭТО ЧИСЛО
 - Прогноз утилизации: {report.get('predicted_utilization', 0):.2%}
 ПРАВИЛО: Если утилизация >30%, ставка ДОЛЖНА быть БЛИЖЕ к оптимальной (кривая Aave). Не оставляй старую ставку при высокой утилизации!
+- Тренд утилизации: {report.get('util_trend', 'stable')} (история: {report.get('util_history', [])})
+- Если тренд RISING — повышай ставку АГРЕССИВНЕЕ (заёмщики разгоняются)
+- Если тренд FALLING — снижай ставку МЯГКО (не резко, дай стабилизироваться)
+- Если тренд STABLE — двигайся к оптимальной ставке плавно
 
 ## ML модель (RandomForest)
 - Прогноз тренда: {report.get('ml', {}).get('trend', {}).get('direction', 'hold')}
@@ -142,19 +146,24 @@ class AiEngine:
         optimal_rate = report.get("optimal_rate_bps", current_rate)
         trend = report.get("ml", {}).get("trend", {}).get("direction", "sideways")
         vol_regime = report.get("volatility", {}).get("regime", "medium")
+        util_trend = report.get("util_trend", "stable")
 
-        # Rate decision based on utilization + optimal rate
+        # Rate decision based on utilization + trend + optimal rate
         if util > 0.8:
-            new_rate = min(current_rate + 100, 2000)
-            reason = f"High util {util:.0%} → rate +1%"
+            boost = 150 if util_trend == "rising" else 100
+            new_rate = min(current_rate + boost, 2000)
+            reason = f"High util {util:.0%} ({util_trend}) → rate +{boost/100}%"
         elif util > 0.5:
-            # Move toward optimal rate
             diff = optimal_rate - current_rate
-            new_rate = current_rate + max(-100, min(100, diff // 2))
-            reason = f"Util {util:.0%}, moving toward optimal {optimal_rate}bps"
-        elif util < 0.15 and trend == "down":
+            speed = 2 if util_trend == "rising" else 3  # faster when rising
+            new_rate = current_rate + max(-100, min(100, diff // speed))
+            reason = f"Util {util:.0%} {util_trend}, toward optimal {optimal_rate}bps"
+        elif util < 0.15:
             new_rate = max(current_rate - 50, 100)
-            reason = f"Low util {util:.0%} + downtrend → rate -0.5%"
+            reason = f"Low util {util:.0%} → rate -0.5%"
+        elif util_trend == "rising" and util > 0.3:
+            new_rate = min(current_rate + 50, 2000)
+            reason = f"Util rising {util:.0%} → preemptive rate +0.5%"
         elif risk > 60:
             new_rate = min(current_rate + 50, 2000)
             reason = f"Risk {risk:.0f}/100 → rate +0.5%"
