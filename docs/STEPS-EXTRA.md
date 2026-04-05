@@ -771,6 +771,697 @@ SPL Token-2022 = новый стандарт токенов Solana с расши
 
 ---
 
+## Степ 28 — Stealth Deposits (ECDH Privacy Layer)
+**Время:** ~2.5 часа
+**Приоритет:** ВЫСОКИЙ — ни один другой проект на хакатоне этого не сделает
+**Источник:** [zeraprivacy/GhostSol](https://github.com/jskoiz/zeraprivacy) — рабочая крипта на `@noble/curves`
+
+### Проблема
+
+Все видят on-chain: "Вася положил $10K в пул". MEV-боты и конкуренты знают
+размеры позиций, могут таргетить ликвидации. Ни один Solana lending протокол
+не решает эту проблему.
+
+### Решение: Stealth Addresses для депозитов
+
+ECDH-протокол на Ed25519. Каждый депозит идёт на уникальный одноразовый адрес.
+Невозможно связать два депозита одного юзера.
+
+**Как работает:**
+```
+1. Юзер генерирует stealth meta-address (viewKey + spendKey)
+2. При депозите протокол вычисляет:
+   sharedSecret = SHA256(ephemeralPrivate * viewPublicKey)
+   stealthPubKey = spendPublicKey + H(sharedSecret) * G
+3. Депозит уходит на stealthPubKey — уникальный, одноразовый
+4. Ephemeral key сохраняется в memo транзакции: "STEALTH:<base58_key>"
+5. Юзер сканирует мемо → находит свои депозиты
+```
+
+**Frontend (src/components/deposit/):**
+
+Добавить переключатель "Private Deposit" на странице Deposit:
+```
+┌── Deposit ──────────────────────────────────────┐
+│                                                  │
+│  Amount: [____1000____] aiUSDC                   │
+│  [25%] [50%] [75%] [MAX]                         │
+│                                                  │
+│  ┌─ Privacy Mode ────────────────────────────┐  │
+│  │  ○ Standard — видно всем on-chain         │  │
+│  │  ● Private  — stealth address (ECDH)      │  │
+│  │                                            │  │
+│  │  Your stealth meta-address:               │  │
+│  │  [5Kd9...7hF2] [Copy]                     │  │
+│  │                                            │  │
+│  │  ℹ Each deposit goes to a unique          │  │
+│  │    one-time address. Unlinkable.          │  │
+│  └────────────────────────────────────────────┘  │
+│                                                  │
+│  [Deposit Privately]                             │
+└──────────────────────────────────────────────────┘
+```
+
+**Реализация:**
+
+```
+frontend/src/lib/stealth.ts:
+  - generateStealthMetaAddress() → { viewKey, spendKey, metaAddress }
+  - deriveStealthAddress(metaAddress, ephemeral) → one-time pubkey
+  - scanForPayments(viewKey, txMemos[]) → found deposits
+  
+  Зависимости: @noble/curves (Ed25519), @noble/hashes (SHA256)
+  Всё работает в браузере, нет бэкенда для крипты.
+
+frontend/src/hooks/useStealthDeposit.ts:
+  - Генерация ephemeral key
+  - Вычисление stealth address
+  - Отправка TX с memo "STEALTH:<ephemeralPubKey>"
+  - Сохранение viewKey в localStorage
+
+frontend/src/hooks/useStealthScanner.ts:
+  - Сканирование мемо транзакций пула
+  - Обнаружение своих депозитов через viewKey
+  - Показ в UI: "Found 3 private deposits, total: 5000 aiUSDC"
+```
+
+**Backend:** добавить endpoint `GET /api/pool/stealth-stats`
+```json
+{
+  "total_stealth_deposits": 12,
+  "stealth_volume_percent": 23.5,
+  "last_stealth_deposit": "2026-04-05T12:30:00Z"
+}
+```
+
+**Dashboard виджет:**
+```
+┌── Privacy Stats ─────────────────┐
+│ Stealth Deposits: 12 (23%)      │
+│ Standard Deposits: 40 (77%)     │
+│ Protocol: ECDH + Ed25519        │
+└──────────────────────────────────┘
+```
+
+### Проверка
+```
+1. Включить "Private" toggle → генерируется meta-address
+2. Deposit 100 aiUSDC → TX с memo STEALTH:...
+3. Другой юзер не может связать два депозита
+4. Scanner находит свои депозиты через viewKey
+5. Withdraw из stealth позиции → OK
+```
+
+### Для жюри:
+> "Мы единственные кто реализовал stealth addresses в lending протоколе.
+> Реальная криптография (ECDH, Ed25519), не симуляция.
+> Privacy + AI Lending = то, что DeFi нужно."
+
+---
+
+## Степ 29 — Viewing Keys + Compliance Dashboard
+**Время:** ~2 часа
+**Приоритет:** ВЫСОКИЙ — enterprise-grade фича, жюри оценит зрелость
+**Источник:** [zeraprivacy](https://github.com/jskoiz/zeraprivacy), [zenlok](https://github.com/zenlok/contract)
+
+### Проблема
+
+Stealth deposits скрывают позиции. Но регуляторы и аудиторы должны иметь
+возможность проверить. Как дать доступ без раскрытия приватных ключей?
+
+### Решение: Time-Limited Viewing Keys
+
+Юзер генерирует viewing key с ограниченными правами и сроком действия.
+Аудитор может ВИДЕТЬ позиции, но НЕ может подписывать транзакции.
+
+**Контракт (lib.rs):**
+```rust
+// Добавить в UserPosition:
+pub viewing_key_hash: Option<[u8; 32]>,  // SHA256 от viewing key
+pub viewing_key_expires: Option<i64>,     // unix timestamp
+
+// Новая инструкция:
+pub fn set_viewing_key(
+    ctx: Context<SetViewingKey>,
+    key_hash: [u8; 32],
+    expires_at: i64,
+) -> Result<()> {
+    let position = &mut ctx.accounts.user_position;
+    position.viewing_key_hash = Some(key_hash);
+    position.viewing_key_expires = Some(expires_at);
+    emit!(ViewingKeySetEvent { ... });
+    Ok(())
+}
+```
+
+**Frontend — новая вкладка "Access" в профиле:**
+```
+┌── Viewing Keys ──────────────────────────────────┐
+│                                                   │
+│  Generate a viewing key for auditors/regulators.  │
+│  They can see your positions but cannot transact. │
+│                                                   │
+│  Permissions:                                     │
+│  [x] View balance       [x] View collateral       │
+│  [x] View health factor [ ] View transaction history│
+│                                                   │
+│  Expires: [24 hours ▾]                            │
+│                                                   │
+│  [Generate Viewing Key]                           │
+│                                                   │
+│  ┌─ Active Keys ─────────────────────────────┐   │
+│  │ Key #1: 7Kd9...2hF  expires in 18h  [Revoke]│  │
+│  │ Key #2: 3Ab1...9cE  expires in 6h   [Revoke]│  │
+│  └───────────────────────────────────────────┘   │
+└──────────────────────────────────────────────────┘
+```
+
+**Frontend — Audit View (отдельная страница /audit?key=...):**
+```
+┌── Audit View (Read-Only) ────────────────────────┐
+│ Viewing key: 7Kd9...2hF                          │
+│ Expires: 18h remaining                            │
+│ Permissions: balance, collateral, health          │
+│                                                   │
+│ ┌── Position ────────────────────────────────┐   │
+│ │ Deposited: 5,000 aiUSDC                    │   │
+│ │ Borrowed: 2,000 aiUSDC                     │   │
+│ │ Collateral: 15 SOL ($1,200)                │   │
+│ │ Health Factor: 1.45 (Safe)                 │   │
+│ │ Loyalty: Gold                              │   │
+│ └────────────────────────────────────────────┘   │
+│                                                   │
+│ ⚠ Read-only access. No transactions possible.    │
+└──────────────────────────────────────────────────┘
+```
+
+**Реализация:**
+```
+frontend/src/lib/viewing-keys.ts:
+  - generateViewingKey(permissions, ttl) → { key, hash }
+  - Шифрование: AES-GCM, ключ = HKDF(viewKey + spendKey)
+  - Хранение: key_hash on-chain, полный key у юзера
+
+frontend/src/pages/AuditView.tsx:
+  - URL: /audit?key=<base58_viewing_key>
+  - Верификация: SHA256(key) == position.viewing_key_hash
+  - Проверка expires > now
+  - Read-only рендер позиции
+
+backend/app/routers/audit.py:
+  - GET /api/audit/verify?key=... → position data (если ключ валиден)
+```
+
+### Для жюри:
+> "Privacy без accountability = анархия. Наш протокол даёт privacy через
+> stealth addresses И compliance через viewing keys. Регулятор видит, но
+> не трогает. Это enterprise-grade решение."
+
+---
+
+## Степ 30 — Leaderboard + Keeper Rankings
+**Время:** ~1.5 часа
+**Приоритет:** СРЕДНИЙ — engagement, видно на фронте, используем уже имеющиеся on-chain данные
+**Источник:** [thezapcoin](https://github.com/justin212407/thezapcoin)
+
+### Что делаем
+
+Контракт уже хранит: `total_operations`, `first_deposit_at`, `loyalty_tier`,
+`total_deposits_count`, `total_borrows_count`. Показываем это как лидерборд.
+
+**Frontend — новая страница /leaderboard:**
+```
+┌── Leaderboard ───────────────────────────────────────────┐
+│                                                           │
+│  [Top Depositors] [Top Keepers] [Loyalty Tiers]          │
+│                                                           │
+│  ── Top Depositors ──────────────────────────────────    │
+│  #  Address        Deposited    Operations  Tier         │
+│  1  7h3i...4A     $50,000      127         Platinum     │
+│  2  J2j7...JL     $32,000       89         Gold         │
+│  3  9Kf2...xB     $28,500       76         Gold         │
+│  4  3Ab1...cE     $15,000       45         Silver       │
+│  5  You → 5Kd...F  $5,000       12         Bronze      │
+│                                                           │
+│  ── Top Keepers (Liquidators) ───────────────────────    │
+│  #  Address        Liquidations  Rewards Earned          │
+│  1  Mf4k...2Q     23            $115.00                  │
+│  2  8Rj1...vN     17            $82.50                   │
+│  3  AI Agent       12            $55.00                   │
+│                                                           │
+│  ── Loyalty Distribution ────────────────────────────    │
+│  Platinum ██░░░░░░░░  3 users (5%)                       │
+│  Gold     ████░░░░░░  8 users (13%)                      │
+│  Silver   ████████░░  22 users (37%)                     │
+│  Bronze   ██████████  27 users (45%)                     │
+└──────────────────────────────────────────────────────────┘
+```
+
+**Backend:**
+```
+GET /api/leaderboard/depositors?limit=10 → top depositors by total_deposits
+GET /api/leaderboard/keepers?limit=10 → top keepers by liquidation count + rewards
+GET /api/leaderboard/tiers → distribution by loyalty tier
+```
+
+**Реализация:**
+```
+backend/app/routers/leaderboard.py:
+  - Читаем все UserPosition аккаунты через getProgramAccounts (RPC)
+  - Сортируем по total_deposits / operations / tier
+  - Кэш 60 сек (тяжёлый RPC запрос)
+
+frontend/src/pages/Leaderboard.tsx:
+  - 3 таба: Depositors / Keepers / Tiers
+  - Хайлайт текущего юзера в таблице
+  - Mobile: карточки вместо таблицы
+
+frontend/src/components/layout/BottomNav.tsx:
+  - Добавить иконку трофея → /leaderboard
+```
+
+**Dashboard виджет (компактный):**
+```
+┌── Your Rank ──────────┐
+│ #12 of 60 depositors  │
+│ Tier: Silver → Gold   │
+│ Progress: ████░ 72%   │
+└───────────────────────┘
+```
+
+### Для жюри:
+> "Gamification увеличивает retention. Keeper leaderboard мотивирует
+> ликвидаторов. Всё построено на реальных on-chain данных."
+
+---
+
+## Степ 31 — Position Transfer (Secondary Market)
+**Время:** ~2 часа
+**Приоритет:** СРЕДНИЙ — уникальная DeFi механика, ни один хакатон-проект не делает
+**Источник:** [zenlok](https://github.com/zenlok/contract) — two-step ownership transfer pattern
+
+### Проблема
+
+Юзер положил $10K на 6 месяцев, накопил Gold loyalty tier. Ему срочно нужны
+деньги, но withdraw = потеря позиции и tier. Решение: продать позицию другому.
+
+### Решение: Two-Step Position Transfer
+
+```
+Шаг 1: Seller вызывает transfer_position(buyer_pubkey)
+        → position.pending_transfer = Some(buyer_pubkey)
+        → position.status = PendingTransfer
+
+Шаг 2: Buyer вызывает accept_position()
+        → ownership меняется
+        → loyalty tier и history сохраняются
+        → seller может cancel до accept
+```
+
+**Контракт (lib.rs):**
+```rust
+// Добавить в UserPosition:
+pub pending_transfer: Option<Pubkey>,
+
+// Две новые инструкции:
+pub fn transfer_position(ctx: Context<TransferPosition>, new_owner: Pubkey) -> Result<()> {
+    let position = &mut ctx.accounts.user_position;
+    require!(position.borrowed == 0, LendError::HasActiveBorrow);
+    position.pending_transfer = Some(new_owner);
+    emit!(PositionTransferInitiated { from: ..., to: new_owner });
+    Ok(())
+}
+
+pub fn accept_position(ctx: Context<AcceptPosition>) -> Result<()> {
+    // Верифицировать что signer == pending_transfer
+    // Создать новую позицию для buyer с данными seller
+    // Закрыть старую позицию seller
+    emit!(PositionTransferCompleted { ... });
+    Ok(())
+}
+```
+
+**Frontend — кнопка на странице позиции:**
+```
+┌── Your Position ─────────────────────────────────┐
+│ Deposited: 5,000 aiUSDC                          │
+│ Loyalty: Gold (127 operations)                   │
+│ Health: 1.45                                      │
+│                                                   │
+│ [Withdraw]  [Transfer Position]                   │
+└──────────────────────────────────────────────────┘
+
+При клике Transfer:
+┌── Transfer Position ─────────────────────────────┐
+│ Transfer your deposit position to another wallet. │
+│ Loyalty tier and history will be preserved.       │
+│                                                   │
+│ Recipient: [_____wallet address_____]             │
+│                                                   │
+│ ⚠ You must have no active borrows.               │
+│ ⚠ Recipient must accept the transfer.            │
+│                                                   │
+│ [Initiate Transfer]  [Cancel]                     │
+└──────────────────────────────────────────────────┘
+
+Pending state:
+┌── Transfer Pending ──────────────────────────────┐
+│ Waiting for 3Ab1...cE to accept.                 │
+│ [Cancel Transfer]                                 │
+└──────────────────────────────────────────────────┘
+```
+
+**Activity feed:** показывает трансферы как отдельный тип
+```
+↔ Position Transfer  5,000 aiUSDC  Gold tier   4/7 14:20
+  From: 5Kd9...7hF → To: 3Ab1...cE
+  TX: 8xK2f...
+```
+
+### Для жюри:
+> "Secondary market для lending позиций. Юзер может продать позицию
+> с сохранением loyalty tier. Two-step transfer = безопасность.
+> Это паттерн из production DeFi (Aave v3 credit delegation)."
+
+---
+
+## Степ 32 — Model Reputation Tracking (Self-Improving AI)
+**Время:** ~1.5 часа
+**Приоритет:** ВЫСОКИЙ — превращает AI из "чёрного ящика" в прозрачную систему с метриками
+**Источник:** [YieldSage](https://github.com/youngjun-k/yieldsage) — reputation-weighted collaborative decisions
+
+### Проблема
+
+Сейчас 5 ML моделей имеют статические веса в решении. Если TrendPredictor
+ошибается 10 раз подряд — он всё ещё влияет одинаково. Жюри спросит:
+"Как AI учится на ошибках?"
+
+### Решение: Rolling Accuracy + Dynamic Weighting
+
+Каждая модель получает accuracy score на основе последних N предсказаний.
+Вес модели в финальном решении = f(accuracy). Плохая модель автоматически
+теряет влияние, хорошая — усиливается.
+
+**AI Agent (ai-agent/agent/model_reputation.py):**
+```python
+class ModelReputation:
+    """Track per-model accuracy with rolling window."""
+    
+    def __init__(self, window=50):
+        self.history = {
+            "trend_predictor": deque(maxlen=window),
+            "anomaly_detector": deque(maxlen=window),
+            "volatility_model": deque(maxlen=window),
+            "risk_scorer": deque(maxlen=window),
+            "utilization_predictor": deque(maxlen=window),
+        }
+    
+    def record(self, model: str, predicted, actual):
+        """After each cycle, compare prediction vs reality."""
+        error = abs(predicted - actual) / max(actual, 1)
+        accuracy = max(0, 1.0 - error)
+        self.history[model].append(accuracy)
+    
+    def get_weights(self) -> dict:
+        """Dynamic weights based on recent accuracy."""
+        weights = {}
+        for model, hist in self.history.items():
+            if len(hist) < 5:
+                weights[model] = 1.0  # default until enough data
+            else:
+                avg_accuracy = sum(hist) / len(hist)
+                weights[model] = max(0.1, avg_accuracy)  # floor at 0.1
+        
+        # Normalize to sum=1
+        total = sum(weights.values())
+        return {k: v/total for k, v in weights.items()}
+```
+
+**Orchestrator integration:**
+```python
+# В каждом цикле:
+# 1. Проверить предыдущее предсказание vs реальность
+reputation.record("trend_predictor", 
+    predicted=last_trend_direction, 
+    actual=actual_price_direction)
+
+# 2. Получить динамические веса
+weights = reputation.get_weights()
+
+# 3. Передать в QuantReport → Gemini видит веса
+quant_report["model_weights"] = weights
+quant_report["model_accuracies"] = reputation.get_accuracies()
+```
+
+**Backend — новый endpoint:**
+```
+GET /api/ai/model-stats → {
+  "trend_predictor":       { "accuracy": 0.62, "weight": 0.24, "last_50": [...] },
+  "anomaly_detector":      { "accuracy": 0.78, "weight": 0.31, "last_50": [...] },
+  "volatility_model":      { "accuracy": 0.55, "weight": 0.18, "last_50": [...] },
+  "risk_scorer":           { "accuracy": 0.71, "weight": 0.27, "last_50": [...] },
+  "utilization_predictor": { "accuracy": 0.48, "weight": 0.15, "last_50": [...] }
+}
+```
+
+**Frontend — виджет на AI Decisions странице:**
+```
+┌── AI Model Performance ──────────────────────────────────┐
+│                                                           │
+│  Model               Accuracy   Weight   Trend           │
+│  Anomaly Detector    78%        0.31     ████████ ↑      │
+│  Risk Scorer         71%        0.27     ███████  →      │
+│  Trend Predictor     62%        0.24     ██████   ↓      │
+│  Volatility Model    55%        0.18     █████    →      │
+│  Util Predictor      48%        0.15     ████     ↓      │
+│                                                           │
+│  ℹ Weights auto-adjust every cycle based on accuracy.    │
+│    Better models get more influence on rate decisions.    │
+└──────────────────────────────────────────────────────────┘
+```
+
+### Проверка
+```
+1. Запустить 10 циклов AI → модели накапливают accuracy
+2. Модель с низкой accuracy → вес падает автоматически
+3. /api/ai/model-stats → показывает реальные метрики
+4. Frontend → виджет обновляется каждый цикл
+```
+
+### Для жюри:
+> "Наш AI не статический — он УЧИТСЯ. 5 моделей конкурируют,
+> плохие теряют вес автоматически. Self-improving AI lending.
+> У конкурентов? YieldSage врёт про GARCH, SolSkill — if/else.
+> У нас — реальные метрики на каждую модель."
+
+---
+
+## Степ 33 — Dual-Layer Guardrails (On-chain PDA + Python)
+**Время:** ~1.5 часа
+**Приоритет:** ВЫСОКИЙ — единственный проект с двойной защитой
+**Источник:** [AgentVault](https://github.com/cloudweaver/agentvault) — dual-layer policy enforcement
+
+### Проблема
+
+Сейчас guard rails проверяются:
+- В Python (validator.py) — ДО транзакции
+- В контракте (lib.rs) — ВО ВРЕМЯ транзакции
+
+Но параметры guard rails (min/max rate, cooldown) зашиты в коде контракта.
+Если нужно изменить — redeploy. А если Python validator скомпрометирован,
+он может послать невалидные данные (хотя контракт отклонит — нет прозрачности).
+
+### Решение: GuardrailConfig PDA + Policy Hash Sync
+
+Хранить параметры guard rails в отдельном on-chain PDA. Python agent
+сверяет свой конфиг с on-chain hash перед каждым циклом. Рассинхрон = стоп.
+
+**Контракт (lib.rs):**
+```rust
+#[account]
+pub struct GuardrailConfig {
+    pub authority: Pubkey,
+    pub min_rate_bps: u16,           // default 100 (1%)
+    pub max_rate_bps: u16,           // default 2000 (20%)
+    pub min_collateral_bps: u16,     // default 12000 (120%)
+    pub max_collateral_bps: u16,     // default 20000 (200%)
+    pub max_change_bps: u16,         // default 2000 (20%)
+    pub cooldown_seconds: i64,       // default 600 (10 min)
+    pub config_hash: [u8; 32],       // SHA256 всех параметров
+    pub last_updated: i64,
+    pub bump: u8,
+}
+
+// Новая инструкция: обновить guardrails (только authority)
+pub fn update_guardrails(ctx: Context<UpdateGuardrails>, params: GuardrailParams) -> Result<()> {
+    let config = &mut ctx.accounts.guardrail_config;
+    config.min_rate_bps = params.min_rate_bps;
+    config.max_rate_bps = params.max_rate_bps;
+    // ...
+    config.config_hash = sha256(params.to_bytes());
+    emit!(GuardrailsUpdatedEvent { ... });
+    Ok(())
+}
+
+// В update_parameters: читать GuardrailConfig вместо хардкода
+pub fn update_parameters(ctx: Context<UpdateParameters>, ...) -> Result<()> {
+    let config = &ctx.accounts.guardrail_config;
+    require!(new_rate >= config.min_rate_bps, LendError::RateTooLow);
+    require!(new_rate <= config.max_rate_bps, LendError::RateTooHigh);
+    // ...
+}
+```
+
+**AI Agent (validator.py) — добавить hash sync:**
+```python
+async def validate_with_sync(self, decision, pool_state, guardrail_config):
+    """Validate decision AND verify config sync."""
+    
+    # 1. Вычислить hash локального конфига
+    local_hash = sha256(self.config.to_bytes())
+    
+    # 2. Сравнить с on-chain hash
+    if local_hash != guardrail_config.config_hash:
+        logger.error("GUARDRAIL DESYNC! Local != on-chain. Stopping.")
+        return False, "Config desync detected"
+    
+    # 3. Обычная валидация
+    return self._validate_bounds(decision, guardrail_config)
+```
+
+**Frontend — Guardrails Status на дашборде:**
+```
+┌── Guard Rails ────────────────────────────────────┐
+│ Layer 1: AI Prompt         ✅ Active              │
+│ Layer 2: Python Validator  ✅ Synced (hash match) │
+│ Layer 3: On-chain PDA      ✅ Active              │
+│ Layer 4: Emergency Freeze  ✅ Ready               │
+│ Layer 5: Auto-rate         ✅ Ready               │
+│                                                    │
+│ Rate: 1% — 20%  |  Collateral: 120% — 200%       │
+│ Max change: 20%  |  Cooldown: 10 min              │
+│ Config hash: 7a3f...2b1c                          │
+│ Last updated: 2 hours ago by authority             │
+└───────────────────────────────────────────────────┘
+```
+
+### Проверка
+```
+1. Инициализировать GuardrailConfig PDA → config_hash вычислен
+2. AI цикл → validator проверяет hash → match → OK
+3. Authority обновляет min_rate → новый hash on-chain
+4. AI цикл → hash mismatch → STOP → логирует "desync"
+5. AI подгружает новый конфиг → hash match → продолжает
+```
+
+### Для жюри:
+> "5 уровней защиты. Guardrails не захардкожены — они в отдельном PDA,
+> обновляемом governance. Python validator сверяет hash с on-chain
+> перед каждым решением. Рассинхрон = AI останавливается.
+> Ни один конкурент на Colosseum этого не делает."
+
+---
+
+## Степ 34 — AI Dry-Run Simulation
+**Время:** ~1.5 часа
+**Приоритет:** СРЕДНИЙ — показывает transparency AI решений
+**Источник:** [SolSkill](https://github.com/caiovicentino/solskill) — simulate endpoint
+
+### Проблема
+
+Юзер видит: "AI поменял ставку 5% → 6.5%". Но не понимает ПОЧЕМУ
+и ЧТО БУДЕТ если ставка изменится. Нет прозрачности.
+
+### Решение: Simulate Before Execute
+
+Каждый AI цикл СНАЧАЛА симулирует эффект решения, потом исполняет.
+Юзер может в любой момент запустить "What-If" симуляцию на фронте.
+
+**Backend — новый endpoint:**
+```
+POST /api/ai/simulate
+Body: { "new_rate_bps": 650, "new_collateral_bps": 15000 }
+
+Response: {
+  "impact": {
+    "utilization_change": "+3.2%",    // 45% → 48.2%
+    "borrower_cost_change": "+$12/month per $1000",
+    "depositor_yield_change": "+$8/month per $1000",
+    "positions_at_risk": 2,           // позиций приблизятся к ликвидации
+    "estimated_tvl_impact": "-$5,000", // юзеры могут выйти
+    "protocol_revenue_change": "+$150/month"
+  },
+  "risk_assessment": {
+    "level": "low",
+    "details": "Rate increase within normal range, no positions endangered"
+  },
+  "ai_reasoning": "RSI=72 overbought, raising rate to cool borrowing demand"
+}
+```
+
+**AI Agent — simulate в orchestrator:**
+```python
+async def simulate_decision(self, decision, pool_state):
+    """Simulate impact BEFORE executing."""
+    new_rate = decision["interest_rate_bps"]
+    current_rate = pool_state["interest_rate_bps"]
+    
+    # Estimate borrowing cost change
+    rate_delta = (new_rate - current_rate) / 10000
+    borrower_impact = pool_state["total_borrows"] * rate_delta / 12
+    
+    # Count positions at risk
+    positions = await self.reader.get_all_positions()
+    at_risk = sum(1 for p in positions 
+                  if p.health_factor < 1.2 and new_rate > current_rate)
+    
+    return {
+        "utilization_change": self._estimate_util_change(decision, pool_state),
+        "borrower_cost_change": borrower_impact,
+        "positions_at_risk": at_risk,
+        ...
+    }
+```
+
+**Frontend — "What-If" панель на AI Decisions:**
+```
+┌── AI Rate Simulator ─────────────────────────────────┐
+│                                                       │
+│  Current rate: 5.00%                                  │
+│  Simulate new rate: [___6.50___] %                    │
+│                                                       │
+│  [Run Simulation]                                     │
+│                                                       │
+│  ┌─ Impact Preview ──────────────────────────────┐   │
+│  │ Utilization:     45% → 48.2% (+3.2%)          │   │
+│  │ Borrower cost:   +$12/mo per $1,000           │   │
+│  │ Depositor yield: +$8/mo per $1,000            │   │
+│  │ Positions at risk: 2 of 60                     │   │
+│  │ Protocol revenue: +$150/mo                     │   │
+│  │ Risk: LOW ✅                                   │   │
+│  └────────────────────────────────────────────────┘   │
+│                                                       │
+│  Last AI simulation (auto, before update):            │
+│  "RSI=72 overbought → rate 5%→6.5% → 2 positions     │
+│   approach risk zone, but overall protocol health OK"  │
+└──────────────────────────────────────────────────────┘
+```
+
+### Проверка
+```
+1. POST /api/ai/simulate → получаем impact preview
+2. Frontend → ввести ставку → Run Simulation → показывает эффект
+3. AI цикл → симуляция записывается в лог перед execution
+4. positions_at_risk > 10 → AI сам снижает rate change
+```
+
+### Для жюри:
+> "AI не просто меняет ставки вслепую — он СИМУЛИРУЕТ эффект.
+> Юзер видит impact ДО изменения. Transparency + accountability.
+> Ни SolSkill, ни AgentVault этого не показывают на фронте."
+
+---
+
 ## Финальная сводка всех степов
 
 ```
@@ -788,17 +1479,72 @@ SPL Token-2022 = новый стандарт токенов Solana с расши
  24    MEV + Production Readiness            1.5  ⬜ TODO   Technical +2
  25    Pyth Oracle on-chain                  1.5  ⬜ TODO   Use of Solana +3
  26    Role Separation + Viewing Keys        2    ⬜ TODO   Innovation +3
- 27    Token-2022 + Roadmap (презентация)    1    ⬜ TODO   Innovation +2
+ 27    Token-2022 + Arcium Roadmap           1    ⬜ TODO   Innovation +2
+ 28    Stealth Deposits (ECDH Privacy)       2.5  ⬜ TODO   Innovation +7 🔥
+ 29    Viewing Keys + Compliance Dashboard   2    ⬜ TODO   Innovation +5 🔥
+ 30    Leaderboard + Keeper Rankings         1.5  ⬜ TODO   UX +3
+ 31    Position Transfer (Secondary Market)  2    ⬜ TODO   Innovation +4
+ 32    Model Reputation (Self-Improving AI)  1.5  ⬜ TODO   AI +5 🔥
+ 33    Dual-Layer Guardrails (PDA + Hash)    1.5  ⬜ TODO   Technical +4 🔥
+ 34    AI Dry-Run Simulation                 1.5  ⬜ TODO   AI +3
 ─────────────────────────────────────────────────────────────────
-                                       ИТОГО: ~72 часа всего
-                                       Осталось: ~11.5 часов
+                                       ИТОГО: ~84.5 часа всего
+                                       Осталось: ~24 часов
 
-Приоритет оставшихся:
-  1. Степ 22 (Health+Partial Liq)  — MUST: production отличие
-  2. Степ 23 (Danger Counter)      — MUST: "работает без AI"
-  3. Степ 25 (Pyth Oracle)         — SHOULD: реальные цены
-  4. Степ 21 (Submit)              — MUST: без этого = 0
-  5. Степ 26 (Roles)               — NICE: security
-  6. Степ 24 (MEV+Checklist)       — NICE: mainnet readiness
-  7. Степ 27 (Token-2022)          — BONUS: roadmap в презе
+```
+
+## Стратегия: что делает нас УНИКАЛЬНЫМИ
+
+```
+Конкуренты на Colosseum:              Мы:
+──────────────────────────             ──────────────────────────────
+YieldSage: LSTM заглушка              ✓ 5 ML моделей + dynamic weights
+SolSkill: if/else правила             ✓ Gemini + QuantReport pipeline
+AgentVault: LLM-чат без ML            ✓ Self-improving AI (model reputation)
+Yumi Finance: 0 AI, выиграл DeFi      ✓ 5-level guard rails + PDA config
+Lending Monitor: health check only     ✓ AI liquidation + price + freeze
+SOLPRISM: commit-reveal паттерн        ✓ Dual-layer hash sync validation
+CrewDegen: трейды каждые 30 мин        ✓ 11-min cycle + dry-run simulation
+```
+
+## Приоритет реализации (что делать первым)
+
+```
+ПОРЯДОК ДЕЙСТВИЙ:
+──────────────────────────────────────────────────────────────
+
+БЛОК A — "Production DeFi" (4ч, виден на фронте):
+  1. Степ 22: Health Factor + Partial Liq + Keeper    2.5ч
+     → Health bar на дашборде, partial liq в activity
+  2. Степ 23: Danger Counter (auto-rate)              1.5ч
+     → Protocol Status badge на дашборде
+
+БЛОК B — "AI Intelligence" (4.5ч, КОНКУРЕНТНОЕ ПРЕИМУЩЕСТВО):
+  3. Степ 32: Model Reputation Tracking                1.5ч
+     → AI Model Performance виджет, dynamic weights
+  4. Степ 33: Dual-Layer Guardrails PDA                1.5ч
+     → Guard Rails Status виджет, 5-level protection
+  5. Степ 34: AI Dry-Run Simulation                    1.5ч
+     → What-If панель на AI Decisions странице
+
+БЛОК C — "Privacy Layer" (4.5ч, УНИКАЛЬНОСТЬ):
+  6. Степ 28: Stealth Deposits                        2.5ч
+     → "Private Deposit" toggle, Privacy Stats виджет
+  7. Степ 29: Viewing Keys + Audit View               2ч
+     → Access вкладка, /audit?key=... страница
+
+БЛОК D — "Engagement + Market" (3.5ч):
+  8. Степ 30: Leaderboard                             1.5ч
+     → Новая страница /leaderboard, rank виджет
+  9. Степ 31: Position Transfer                        2ч
+     → Transfer кнопка на позиции, activity feed
+
+БЛОК E — "Infrastructure + Submit" (5ч):
+ 10. Степ 25: Pyth Oracle                             1.5ч
+ 11. Степ 24: MEV + Checklist                         1.5ч
+ 12. Степ 27: Arcium + Token-2022 в Roadmap            1ч
+ 13. Степ 21: SUBMIT                                   1ч
+
+Если времени мало → A + B + 21
+AI Intelligence + Production DeFi = победа
 ```
