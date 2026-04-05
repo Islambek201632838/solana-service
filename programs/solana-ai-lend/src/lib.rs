@@ -62,6 +62,16 @@ pub mod solana_ai_lend {
         // Step 25: Price tracking
         pool.price_last_updated = 0;
 
+        // Step 35: Insurance Fund (10% of interest → reserve)
+        pool.insurance_fund_bps = 1000; // 10%
+        pool.insurance_balance = 0;
+        pool.total_bad_debt_covered = 0;
+
+        // Step 36: Withdrawal rate limit (0 = unlimited on devnet)
+        pool.max_withdraw_per_epoch = 0;
+        pool.withdrawn_this_epoch = 0;
+        pool.current_epoch = 0;
+
         pool.bump = ctx.bumps.pool;
         pool.vault_bump = ctx.bumps.pool_vault;
 
@@ -281,10 +291,26 @@ pub mod solana_ai_lend {
             // Fields 216-235 are already correct, just need to set keeper_reward
             data[216..218].copy_from_slice(&keeper_reward_bps.to_le_bytes());
         }
-        // For any size: write new step23 fields (all zero/default) and bump/vault_bump at end
-        // Step23 fields start at offset 234 (after update_cooldown ends)
-        // danger_slots(u64)=0 @ 234, auto_rate_active(bool)=0 @ 242, last_danger_check(i64)=0 @ 243, price_last_updated(i64)=0 @ 251
-        // These are already zero from realloc, just ensure bump/vault_bump are correct
+        // Zero out everything from old bump positions to new end, then write bump/vault_bump at new end.
+        if old_size < new_size {
+            let clear_start = old_size.saturating_sub(2);
+            for i in clear_start..new_size {
+                data[i] = 0;
+            }
+        }
+
+        // Always ensure Step 35/36 fields are initialized correctly.
+        // insurance_fund_bps (u16) is right after price_last_updated (i64).
+        // Borsh layout: price_last_updated ends, then insurance_fund_bps (2), insurance_balance (8),
+        // total_bad_debt_covered (8), max_withdraw_per_epoch (8), withdrawn_this_epoch (8),
+        // current_epoch (8), bump (1), vault_bump (1) = total new section = 44 bytes
+        // If insurance_fund_bps == 0 or looks corrupted (>1000), set to default 1000 (10%)
+        let ins_offset = new_size - 2 - 8 - 8 - 8 - 8 - 8 - 2; // offset of insurance_fund_bps
+        let current_ins = u16::from_le_bytes([data[ins_offset], data[ins_offset + 1]]);
+        if current_ins == 0 || current_ins > 5000 {
+            data[ins_offset..ins_offset + 2].copy_from_slice(&1000u16.to_le_bytes()); // 10%
+        }
+
         let new_end = new_size;
         data[new_end - 2] = bump;
         data[new_end - 1] = vault_bump;
@@ -315,6 +341,26 @@ pub mod solana_ai_lend {
         }
         let now = Clock::get()?.unix_timestamp;
         pool.last_update = now - pool.update_cooldown - 1;
+        Ok(())
+    }
+
+    /// Step 35: Cover bad debt from insurance fund (authority only)
+    pub fn cover_bad_debt(ctx: Context<EmergencyFreeze>, amount: u64) -> Result<()> {
+        require!(amount > 0, LendError::ZeroAmount);
+        let pool = &mut ctx.accounts.pool;
+        require!(amount <= pool.insurance_balance, LendError::InsufficientInsurance);
+
+        pool.insurance_balance = pool.insurance_balance.checked_sub(amount).ok_or(LendError::MathOverflow)?;
+        pool.total_bad_debt_covered = pool.total_bad_debt_covered.saturating_add(amount);
+        pool.total_borrows = pool.total_borrows.saturating_sub(amount);
+
+        emit!(BadDebtCoveredEvent {
+            pool: pool.key(),
+            amount,
+            remaining_insurance: pool.insurance_balance,
+            timestamp: Clock::get()?.unix_timestamp,
+        });
+
         Ok(())
     }
 
@@ -431,14 +477,30 @@ pub mod solana_ai_lend {
         let position = &ctx.accounts.user_position;
         require!(amount <= position.deposited, LendError::InsufficientDeposit);
 
-        let pool = &ctx.accounts.pool;
-        require!(amount <= pool.available_liquidity, LendError::InsufficientLiquidity);
+        // Read values before mutable borrow
+        let available = ctx.accounts.pool.available_liquidity;
+        let authority_key = ctx.accounts.pool.authority;
+        let bump = ctx.accounts.pool.bump;
+        let max_withdraw = ctx.accounts.pool.max_withdraw_per_epoch;
+        require!(amount <= available, LendError::InsufficientLiquidity);
 
-        let authority_key = pool.authority.key();
+        // Step 36: Withdrawal rate limit per epoch
+        if max_withdraw > 0 {
+            let clock = Clock::get()?;
+            let pool = &mut ctx.accounts.pool;
+            if clock.epoch != pool.current_epoch {
+                pool.current_epoch = clock.epoch;
+                pool.withdrawn_this_epoch = 0;
+            }
+            let new_total = pool.withdrawn_this_epoch.checked_add(amount).ok_or(LendError::MathOverflow)?;
+            require!(new_total <= pool.max_withdraw_per_epoch, LendError::WithdrawalLimitExceeded);
+            pool.withdrawn_this_epoch = new_total;
+        }
+
         let seeds = &[
             b"lending_pool".as_ref(),
             authority_key.as_ref(),
-            &[pool.bump],
+            &[bump],
         ];
         let signer_seeds = &[&seeds[..]];
 
@@ -579,15 +641,25 @@ pub mod solana_ai_lend {
         require!(new_borrowed <= pool.max_borrow_limit, LendError::BorrowLimitExceeded);
         require!(amount <= pool.available_liquidity, LendError::InsufficientLiquidity);
 
-        // Collateral check (u128 to prevent overflow):
+        // Collateral check with loyalty discount (Step 39)
         // collateral_value_usd = collateral_sol * sol_price / 1e9
-        // Required: collateral_value >= new_borrowed * collateral_ratio / 10000
+        // Required: collateral_value >= new_borrowed * adjusted_ratio / 10000
+        let loyalty_discount: u16 = match position.loyalty_tier {
+            LoyaltyTier::Bronze   => 0,
+            LoyaltyTier::Silver   => 500,   // -5%
+            LoyaltyTier::Gold     => 1000,  // -10%
+            LoyaltyTier::Platinum => 1500,  // -15%
+        };
+        let adjusted_ratio = pool.collateral_ratio_bps
+            .saturating_sub(loyalty_discount)
+            .max(pool.min_collateral_ratio_bps);
+
         let collateral_value = (position.collateral_sol as u128)
             .checked_mul(pool.sol_price_usd as u128).ok_or(LendError::MathOverflow)?
             .checked_div(1_000_000_000).ok_or(LendError::MathOverflow)?;
 
         let required = (new_borrowed as u128)
-            .checked_mul(pool.collateral_ratio_bps as u128).ok_or(LendError::MathOverflow)?
+            .checked_mul(adjusted_ratio as u128).ok_or(LendError::MathOverflow)?
             .checked_div(10000).ok_or(LendError::MathOverflow)?;
 
         require!(collateral_value >= required, LendError::InsufficientCollateral);
@@ -676,6 +748,15 @@ pub mod solana_ai_lend {
             position.accrued_interest = position.accrued_interest
                 .checked_sub(remaining).ok_or(LendError::MathOverflow)?;
             remaining = 0;
+        }
+
+        // Step 35: Insurance accrual — take % of interest paid
+        let interest_paid = amount.saturating_sub(remaining); // portion that went to interest
+        if interest_paid > 0 && pool.insurance_fund_bps > 0 {
+            let insurance_cut = interest_paid
+                .checked_mul(pool.insurance_fund_bps as u64).ok_or(LendError::MathOverflow)?
+                .checked_div(10000).ok_or(LendError::MathOverflow)?;
+            pool.insurance_balance = pool.insurance_balance.saturating_add(insurance_cut);
         }
 
         if remaining > 0 {
@@ -1045,6 +1126,16 @@ pub struct LendingPool {
     pub last_danger_check: i64,
     // Step 25: Price source tracking
     pub price_last_updated: i64,
+
+    // Step 35: Insurance Fund
+    pub insurance_fund_bps: u16,       // % of interest → insurance (e.g. 1000 = 10%)
+    pub insurance_balance: u64,        // accumulated insurance reserve
+    pub total_bad_debt_covered: u64,   // lifetime bad debt covered
+
+    // Step 36: Withdrawal rate limit
+    pub max_withdraw_per_epoch: u64,   // max withdrawal per epoch (0 = unlimited)
+    pub withdrawn_this_epoch: u64,
+    pub current_epoch: u64,
 
     pub bump: u8,
     pub vault_bump: u8,
@@ -1730,6 +1821,15 @@ pub struct GuardrailsUpdatedEvent {
     pub timestamp: i64,
 }
 
+// Step 35: Bad debt covered event
+#[event]
+pub struct BadDebtCoveredEvent {
+    pub pool: Pubkey,
+    pub amount: u64,
+    pub remaining_insurance: u64,
+    pub timestamp: i64,
+}
+
 // ============================================================
 // ERRORS
 // ============================================================
@@ -1780,4 +1880,8 @@ pub enum LendError {
     NoBorrowToAccrue,
     #[msg("Keeper reward exceeds maximum (5%)")]
     RewardTooHigh,
+    #[msg("Withdrawal limit exceeded for this epoch")]
+    WithdrawalLimitExceeded,
+    #[msg("Insufficient insurance fund balance")]
+    InsufficientInsurance,
 }
