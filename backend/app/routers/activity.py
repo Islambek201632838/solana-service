@@ -21,10 +21,11 @@ class LogActivityRequest(BaseModel):
 
 @router.get("/", response_model=ActivityListResponse)
 async def list_activity(
-    limit: int = Query(50, ge=1, le=200),
+    limit: int = Query(50, ge=1, le=500),
+    offset: int = Query(0, ge=0),
     user: str | None = Query(None),
 ):
-    result = await service.get_recent(limit, user)
+    result = await service.get_recent(limit, user, offset)
     return ActivityListResponse(
         items=[ActivityResponse(**r) for r in result["items"]],
         total=result["total"],

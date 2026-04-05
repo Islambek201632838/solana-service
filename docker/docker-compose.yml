@@ -117,7 +117,9 @@ services:
       - ../.env
     restart: unless-stopped
     ports:
-      - "0.0.0.0:3000:80"
+      - "127.0.0.1:3000:80"
+    volumes:
+      - frontend_dist:/usr/share/nginx/html
     depends_on:
       backend:
         condition: service_healthy
@@ -125,7 +127,7 @@ services:
       - internal
 
   # ================================================
-  # Nginx reverse proxy
+  # Nginx reverse proxy — serves static + proxies API
   # ================================================
   nginx:
     image: nginx:alpine
@@ -134,6 +136,7 @@ services:
       - "0.0.0.0:80:80"
     volumes:
       - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - frontend_dist:/usr/share/nginx/html:ro
     depends_on:
       - frontend
       - backend
@@ -142,7 +145,7 @@ services:
 
 volumes:
   sqlite_data:
-  # pgdata:
+  frontend_dist:
 
 networks:
   internal:

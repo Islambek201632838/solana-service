@@ -63,7 +63,7 @@ class ActivityService:
         finally:
             await db.close()
 
-    async def get_recent(self, limit: int = 50, user: str | None = None) -> dict:
+    async def get_recent(self, limit: int = 50, user: str | None = None, offset: int = 0) -> dict:
         await self.init_db()
         db = await self._connect()
         try:
@@ -77,8 +77,8 @@ class ActivityService:
             total = (await count_row.fetchone())[0]
 
             cursor = await db.execute(
-                f"SELECT * FROM activity {where} ORDER BY id DESC LIMIT ?",
-                params + [limit]
+                f"SELECT * FROM activity {where} ORDER BY id DESC LIMIT ? OFFSET ?",
+                params + [limit, offset]
             )
             rows = await cursor.fetchall()
             return {"items": [dict(r) for r in rows], "total": total}

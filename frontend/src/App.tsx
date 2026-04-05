@@ -16,6 +16,7 @@ import RateChart from "./components/dashboard/RateChart";
 import AiDecisionCard from "./components/dashboard/AiDecisionCard";
 import ActivityFeed from "./components/dashboard/ActivityFeed";
 import HealthFactorBar from "./components/dashboard/HealthFactorBar";
+import SafetyNetBadge from "./components/dashboard/SafetyNetBadge";
 import { usePool } from "./hooks/usePool";
 import { useAiDecisions } from "./hooks/useAiDecisions";
 import { useWebSocket } from "./hooks/useWebSocket";
@@ -23,6 +24,9 @@ import { useWebSocket } from "./hooks/useWebSocket";
 import Activity from "./pages/Activity";
 import AiDecisions from "./pages/AiDecisions";
 import Analytics from "./pages/Analytics";
+import Leaderboard from "./pages/Leaderboard";
+import Simulator from "./pages/Simulator";
+import SystemStatus from "./pages/SystemStatus";
 
 const endpoint = import.meta.env.VITE_SOLANA_RPC || clusterApiUrl("devnet");
 
@@ -39,8 +43,13 @@ function DashboardPage() {
           <h2 className="text-2xl font-bold">{t("dashboardTitle")}</h2>
           <p className="text-sm text-gray-500">{t("dashboardSubtitle")}</p>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 flex-wrap">
           <ProtocolMoodBadge mood={state?.current_mood ?? "Calm"} frozen={state?.is_frozen} />
+          <SafetyNetBadge
+            autoRateActive={stats?.auto_rate_active ?? false}
+            dangerSlots={stats?.danger_slots ?? 0}
+            priceStale={stats?.price_stale ?? false}
+          />
           <span className={`w-2 h-2 rounded-full ${wsConnected ? "bg-green-400" : "bg-red-400"}`} />
         </div>
       </div>
@@ -80,6 +89,9 @@ function ActivePage({ tab }: { tab: string }) {
     case "activity": return <Activity />;
     case "decisions": return <AiDecisions />;
     case "analytics": return <Analytics />;
+    case "leaderboard": return <Leaderboard />;
+    case "simulator": return <Simulator />;
+    case "system": return <SystemStatus />;
     default: return <DashboardPage />;
   }
 }

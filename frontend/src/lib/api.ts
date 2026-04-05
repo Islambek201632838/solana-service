@@ -36,8 +36,30 @@ export async function fetchRiskHistory(limit = 50) {
   return res.json();
 }
 
-export async function fetchActivity(limit = 20) {
-  const res = await fetch(`${API_URL}/api/activity/?limit=${limit}`);
+export async function fetchActivity(limit = 20, offset = 0) {
+  const res = await fetch(`${API_URL}/api/activity/?limit=${limit}&offset=${offset}`);
   if (!res.ok) throw new Error(`Activity: ${res.status}`);
+  return res.json();
+}
+
+export async function fetchSystemStatus() {
+  const res = await fetch(`${API_URL}/api/system/status`);
+  if (!res.ok) throw new Error(`System status: ${res.status}`);
+  return res.json();
+}
+
+export async function fetchLeaderboard(type: "depositors" | "borrowers" | "keepers" = "depositors", limit = 10) {
+  const res = await fetch(`${API_URL}/api/leaderboard/${type}?limit=${limit}`);
+  if (!res.ok) throw new Error(`Leaderboard: ${res.status}`);
+  return res.json();
+}
+
+export async function fetchSimulate(newRateBps: number, newCollateralBps: number) {
+  const res = await fetch(`${API_URL}/api/ai/simulate`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ new_rate_bps: newRateBps, new_collateral_bps: newCollateralBps }),
+  });
+  if (!res.ok) throw new Error(`Simulate: ${res.status}`);
   return res.json();
 }

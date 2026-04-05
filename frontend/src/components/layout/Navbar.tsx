@@ -14,6 +14,9 @@ const tabs: { id: string; labelKey: TranslationKey }[] = [
   { id: "activity", labelKey: "recentActivity" },
   { id: "decisions", labelKey: "aiDecisions" },
   { id: "analytics", labelKey: "analytics" },
+  { id: "leaderboard", labelKey: "leaderboard" },
+  { id: "simulator", labelKey: "simulator" },
+  { id: "system", labelKey: "systemStatus" },
 ];
 
 export default function Navbar({ onMenuToggle, activeTab, onTabChange }: Props) {

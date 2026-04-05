@@ -40,15 +40,32 @@ interface ActivityItem {
   rate_at_time: number;
 }
 
+const PAGE_SIZE = 50;
+
 export default function Activity() {
   const { t, lang } = useLang();
   const { stats } = usePool();
   const [items, setItems] = useState<ActivityItem[]>([]);
+  const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
 
   useEffect(() => {
-    fetchActivity(100).then(d => { setItems(d.items || []); setLoading(false); }).catch(() => setLoading(false));
+    fetchActivity(PAGE_SIZE, 0)
+      .then(d => { setItems(d.items || []); setTotal(d.total || 0); setLoading(false); })
+      .catch(() => setLoading(false));
   }, []);
+
+  const loadMore = async () => {
+    setLoadingMore(true);
+    try {
+      const d = await fetchActivity(PAGE_SIZE, items.length);
+      setItems(prev => [...prev, ...(d.items || [])]);
+    } catch { /* ignore */ }
+    setLoadingMore(false);
+  };
+
+  const hasMore = items.length < total;
 
   // Calculate earnings with separate rates
   const deposits = stats?.total_deposits_usd ?? 0;
@@ -72,7 +89,10 @@ export default function Activity() {
 
   return (
     <div className="space-y-6">
-      <h2 className="text-2xl font-bold">{t("recentActivity")}</h2>
+      <div className="flex items-center justify-between">
+        <h2 className="text-2xl font-bold">{t("recentActivity")}</h2>
+        <span className="text-sm text-gray-500">{items.length} / {total} {t("total")}</span>
+      </div>
 
       {/* Earnings Summary */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -221,6 +241,17 @@ export default function Activity() {
               </div>
             ))}
           </div>
+          {hasMore && (
+            <div className="p-4 text-center border-t border-gray-800">
+              <button
+                onClick={loadMore}
+                disabled={loadingMore}
+                className="px-6 py-2 bg-gray-800 hover:bg-gray-700 rounded-lg text-sm text-gray-300 disabled:opacity-50 transition"
+              >
+                {loadingMore ? "..." : t("loadMore")} ({total - items.length})
+              </button>
+            </div>
+          )}
         </div>
       )}
     </div>
