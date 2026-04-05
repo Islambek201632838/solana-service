@@ -14,7 +14,7 @@ const tabs: { id: string; labelKey: TranslationKey }[] = [
   { id: "analytics", labelKey: "analytics" },
   { id: "leaderboard", labelKey: "leaderboard" },
   { id: "simulator", labelKey: "simulator" },
-  { id: "system", labelKey: "systemStatus" },
+  { id: "risk", labelKey: "riskDashboard" },
 ];
 
 export default function MobileDrawer({ open, onClose, onTabChange }: Props) {

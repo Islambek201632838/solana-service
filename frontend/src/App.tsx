@@ -17,6 +17,8 @@ import AiDecisionCard from "./components/dashboard/AiDecisionCard";
 import ActivityFeed from "./components/dashboard/ActivityFeed";
 import HealthFactorBar from "./components/dashboard/HealthFactorBar";
 import SafetyNetBadge from "./components/dashboard/SafetyNetBadge";
+import InsuranceBadge from "./components/dashboard/InsuranceBadge";
+import EarningsWidget from "./components/dashboard/EarningsWidget";
 import { usePool } from "./hooks/usePool";
 import { useAiDecisions } from "./hooks/useAiDecisions";
 import { useWebSocket } from "./hooks/useWebSocket";
@@ -27,6 +29,7 @@ import Analytics from "./pages/Analytics";
 import Leaderboard from "./pages/Leaderboard";
 import Simulator from "./pages/Simulator";
 import SystemStatus from "./pages/SystemStatus";
+import Risk from "./pages/Risk";
 
 const endpoint = import.meta.env.VITE_SOLANA_RPC || clusterApiUrl("devnet");
 
@@ -61,6 +64,21 @@ function DashboardPage() {
       />
       <RateChart />
 
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <EarningsWidget
+          depositedUsd={(stats?.total_deposits_usd ?? 0)}
+          lendRatePct={stats?.lend_rate_pct ?? 0}
+          supplyApyDaily={stats?.supply_apy_daily ?? 0}
+          supplyApyMonthly={stats?.supply_apy_monthly ?? 0}
+        />
+        <InsuranceBadge
+          insurancePct={stats?.insurance_fund_pct ?? 0}
+          balanceUsd={stats?.insurance_balance_usd ?? 0}
+          totalBorrowsUsd={stats?.total_borrows_usd ?? 0}
+          badDebtCoveredUsd={stats?.total_bad_debt_covered_usd ?? 0}
+        />
+      </div>
+
       <div>
         <h3 className="text-lg font-semibold mb-3">{t("recentActivity")}</h3>
         <ActivityFeed />
@@ -92,6 +110,7 @@ function ActivePage({ tab }: { tab: string }) {
     case "leaderboard": return <Leaderboard />;
     case "simulator": return <Simulator />;
     case "system": return <SystemStatus />;
+    case "risk": return <Risk />;
     default: return <DashboardPage />;
   }
 }

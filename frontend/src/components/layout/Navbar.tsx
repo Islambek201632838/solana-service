@@ -16,7 +16,7 @@ const tabs: { id: string; labelKey: TranslationKey }[] = [
   { id: "analytics", labelKey: "analytics" },
   { id: "leaderboard", labelKey: "leaderboard" },
   { id: "simulator", labelKey: "simulator" },
-  { id: "system", labelKey: "systemStatus" },
+  { id: "risk", labelKey: "riskDashboard" },
 ];
 
 export default function Navbar({ onMenuToggle, activeTab, onTabChange }: Props) {
@@ -43,12 +43,12 @@ export default function Navbar({ onMenuToggle, activeTab, onTabChange }: Props) 
         </div>
 
         {!isMobile && (
-          <div className="flex gap-1 text-sm">
+          <div className="flex gap-1 text-sm overflow-x-auto scrollbar-hide">
             {tabs.map((tab) => (
               <button
                 key={tab.id}
                 onClick={() => onTabChange(tab.id)}
-                className={`px-3 py-1.5 rounded-lg transition ${
+                className={`px-2.5 py-1.5 rounded-lg transition whitespace-nowrap ${
                   activeTab === tab.id
                     ? "bg-purple-600/20 text-purple-400"
                     : "text-gray-400 hover:text-white hover:bg-gray-800"

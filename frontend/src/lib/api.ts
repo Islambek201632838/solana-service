@@ -63,3 +63,15 @@ export async function fetchSimulate(newRateBps: number, newCollateralBps: number
   if (!res.ok) throw new Error(`Simulate: ${res.status}`);
   return res.json();
 }
+
+export async function fetchRiskDashboard() {
+  const res = await fetch(`${API_URL}/api/risk/dashboard`);
+  if (!res.ok) throw new Error(`Risk dashboard: ${res.status}`);
+  return res.json();
+}
+
+export async function fetchLiquidationQueue() {
+  const res = await fetch(`${API_URL}/api/risk/liquidation-queue`);
+  if (!res.ok) throw new Error(`Liquidation queue: ${res.status}`);
+  return res.json();
+}

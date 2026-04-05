@@ -9,10 +9,13 @@ interface Props {
   collateralRatio: number;
   currentBorrowed: number;
   loading: boolean;
+  borrowRatePct?: number;
+  loyaltyTier?: string;
 }
 
 export default function BorrowForm({
   onBorrow, collateralSol, solPrice, collateralRatio, currentBorrowed, loading,
+  borrowRatePct = 0, loyaltyTier = "Bronze",
 }: Props) {
   const [amount, setAmount] = useState("");
   const { isMobile } = useBreakpoint();
@@ -50,7 +53,28 @@ export default function BorrowForm({
             <div className={`${barColor} h-2 rounded-full transition-all`} style={{ width: `${Math.min(100, usedPct)}%` }} />
           </div>
           <p className="text-xs text-gray-600">{usedPct.toFixed(1)}% {t("borrowCapacity")}</p>
+          {loyaltyTier !== "Bronze" && (
+            <p className="text-xs text-purple-400">{loyaltyTier} tier: collateral discount applied</p>
+          )}
         </div>
+        {/* Cost calculator */}
+        {parseFloat(amount) > 0 && borrowRatePct > 0 && (
+          <div className="col-span-full bg-gray-800/50 rounded-lg p-3 text-xs space-y-1">
+            <div className="text-gray-400 font-medium mb-1">{t("borrowCost")}</div>
+            <div className="flex justify-between">
+              <span className="text-gray-500">{t("perDay")}</span>
+              <span className="text-orange-400">${(parseFloat(amount) * borrowRatePct / 100 / 365).toFixed(2)}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-gray-500">{t("perMonth")}</span>
+              <span className="text-orange-400">${(parseFloat(amount) * borrowRatePct / 100 / 12).toFixed(2)}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-gray-500">{t("perYear")}</span>
+              <span className="text-orange-400 font-bold">${(parseFloat(amount) * borrowRatePct / 100).toFixed(2)}</span>
+            </div>
+          </div>
+        )}
 
         <div>
           <input
