@@ -2,155 +2,144 @@
 
 **AI-Powered Adaptive Lending Protocol on Solana**
 
-Лендинг-протокол где AI (Gemini) автономно управляет процентными ставками, залоговыми коэффициентами и лимитами — адаптируясь к рынку в реальном времени, а смарт-контракт жёстко ограничивает AI рамками безопасности.
+Лендинг-протокол где AI-агент (Gemini + 5 ML моделей) автономно управляет процентными ставками, залоговыми коэффициентами и лимитами — адаптируясь к рынку в реальном времени. Смарт-контракт жёстко ограничивает AI 7-уровневой защитой.
 
-> Всё работает на **Solana Devnet** — никаких реальных денег.
+> **Solana Devnet** — тестовая сеть, никаких реальных денег.
 
 ---
 
 ## Проблема
 
-Существующие DeFi лендинг-протоколы (Aave, Compound) используют **статичные формулы** для расчёта ставок:
-- Параметры меняются только через голосование (дни/недели)
-- Протоколы не реагируют на резкие изменения рынка
-- Ставки не отражают реальный рыночный риск
+DeFi лендинг-протоколы (Aave, Compound, Marginfi) используют **статичные формулы**:
+- Параметры меняются через governance голосование (дни/недели)
+- Не реагируют на резкие изменения рынка (крэши, волатильность)
+- Одинаковые условия для всех юзеров, независимо от кредитной истории
 
 ## Решение
 
-AI-агент каждые 11 минут:
-1. Собирает рыночные данные (CoinGecko, Solana RPC)
-2. Считает технические индикаторы (RSI, MACD, Bollinger, ATR)
-3. Запускает ML модели (RandomForest, IsolationForest, EWMA)
-4. Анализирует новости через Gemini (sentiment с фильтрацией шума)
-5. Принимает решение и отправляет on-chain транзакцию
-6. Обновляет цену SOL на блокчейне
-7. Может ликвидировать позиции и заморозить протокол при аномалиях
+AI-агент каждые **2 минуты**:
+1. Собирает рыночные данные (CoinGecko API, Solana RPC)
+2. Считает 5 технических индикаторов (RSI, MACD, Bollinger, ATR, EMA)
+3. Запускает 6 ML моделей (RandomForest, IsolationForest, EWMA, RiskScorer, CrashDetector, UtilizationPredictor)
+4. Анализирует новости через Gemini NLP (с фильтрацией шума)
+5. Отслеживает тренд утилизации (rising/falling/stable)
+6. Принимает решение и отправляет on-chain транзакцию
+7. Обновляет цену SOL, мониторит позиции, может ликвидировать и заморозить
 
-Смарт-контракт **жёстко ограничивает** AI — ставка 1-20%, залог 120-200%, макс изменение 20% за раз, cooldown 10 мин.
+При недоступности Gemini — **ML-only fallback** (протокол НИКОГДА не останавливается).
 
 ---
 
 ## Архитектура
 
 ```
-                      ПОЛЬЗОВАТЕЛИ
-                      │         │
-                Лендер│         │Заёмщик
-                      ▼         ▼
-           ┌──────────────────────────┐
-           │   FRONTEND (React+Vite)  │
-           │   Adaptive Desktop+Mobile│
-           └──────┬──────────┬────────┘
-                  │          │
-   REST/WebSocket │          │ Phantom Wallet
-   (через nginx)  │          │ (подпись TX)
-                  ▼          ▼
-        ┌──────────────┐  ┌────────────────────────┐
-        │  FastAPI      │  │  Solana DEVNET         │
-        │  Backend      │  │  Smart Contract        │
-        │  + WebSocket  │  │  (Anchor/Rust)         │
-        └───┬───────────┘  └───────────▲────────────┘
-            │                          │
-            ▼                          │
-   ┌────────────────────────────┐      │
-   │       AI AGENT             │──────┘
-   │   ┌─────────────────────┐  │
-   │   │ Data → Quant → ML   │  │  Каждые 11 мин:
-   │   │ → Sentiment → Gemini│  │  update_parameters TX
-   │   │ → Validate → TX     │  │  set_sol_price TX
-   │   └─────────────────────┘  │  liquidate (при необходимости)
-   └────────────────────────────┘  emergency_freeze (при аномалии)
+                     ПОЛЬЗОВАТЕЛИ
+                     |         |
+               Лендер|         |Заёмщик
+                     v         v
+          +---------------------------+
+          |  FRONTEND (React + Vite)  |
+          |  Dashboard, Activity,     |
+          |  AI Decisions, Risk,      |
+          |  Simulator, Leaderboard   |
+          +-----+------------+-------+
+                |            |
+  REST/WebSocket|            | Phantom Wallet
+  (nginx proxy) |            | (TX signing)
+                v            v
+       +--------------+  +------------------------+
+       |  FastAPI      |  |  Solana DEVNET         |
+       |  Backend      |  |  Smart Contract        |
+       |  + WebSocket  |  |  (Anchor/Rust)         |
+       +---+-----------+  +----------^-------------+
+           |                         |
+           v                         |
+  +-----------------------------+    |
+  |       AI AGENT              |----+
+  |  +------------------------+|
+  |  | CoinGecko -> Quant     ||  Каждые 2 мин:
+  |  | -> ML (6 моделей)      ||  set_sol_price TX
+  |  | -> CrashDetector       ||  update_parameters TX
+  |  | -> Sentiment (Gemini)  ||  liquidate (если нужно)
+  |  | -> Preemptive Engine   ||  emergency_freeze (аномалия)
+  |  | -> Validate -> TX      ||
+  |  +------------------------+|
+  +-----------------------------+
 ```
+
+> Подробная архитектура: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 
 ## Технологии
 
 | Компонент | Стек |
 |-----------|------|
-| Контракт | Rust + Anchor 0.32.1 (14 инструкций) |
-| AI Agent | Python 3.12 + Gemini 2.0 Flash + RandomForest + IsolationForest + EWMA |
-| Backend | FastAPI + WebSocket + aiosqlite |
-| Frontend | React 19 + Vite + TailwindCSS + Recharts + Solana Wallet Adapter |
-| Sentiment | CryptoPanic + CoinGecko + Gemini NLP (шум vs серьёзные события) |
-| Инфра | Docker Compose + Nginx reverse proxy |
+| Контракт | Rust + Anchor 0.32.1 (16 инструкций, 3 PDA) |
+| AI Agent | Python 3.12 + Gemini 2.0 Flash + 6 ML моделей + ML fallback |
+| Backend | FastAPI + WebSocket + aiosqlite + 10 API routers |
+| Frontend | React 19 + Vite + TailwindCSS + Recharts |
+| Инфра | Docker Compose (5 сервисов) + Nginx reverse proxy |
 | i18n | Русский + Английский (UI + AI reasoning) |
 
 ---
 
-## AI Decision — что внутри каждого решения
+## Ключевые фичи
 
-Каждые 11 минут AI генерирует решение. Вот что оно содержит:
+### DeFi Production
+- **Partial Liquidation** — ликвидируется минимум чтобы вернуть health > 1.1 (как Aave v3)
+- **Keeper Rewards** — 1% от погашенного долга ликвидатору
+- **Health Factor** — on-chain расчёт + прогресс-бар на фронте
+- **Insurance Fund** — 10% от interest -> резерв на bad debt
+- **Withdrawal Rate Limit** — per-epoch лимит на вывод (circuit breaker)
+- **Loyalty LTV Discount** — Bronze/Silver/Gold/Platinum, лучшие условия лояльным юзерам
 
-### Основные параметры
+### AI Intelligence
+- **6 ML моделей**: RandomForest (тренд), IsolationForest (аномалии), EWMA (волатильность), RiskScorer (композитный риск), CrashDetector (6 сигналов крэша), UtilizationPredictor
+- **Crash Detector** — предсказывает вероятность падения >10% (6 ML-сигналов)
+- **Preemptive Engine** — AI действует ДО проблемы (не после)
+- **Gemini Fallback** — ML-only режим когда LLM недоступен
+- **Utilization Trend** — AI учитывает тренд (rising/falling/stable) при решении
+- **Sentiment Filter** — отделяет шум (мемы, хайп) от серьёзных событий
 
-| Поле | Описание |
-|------|----------|
-| **interest_rate_bps** | Процентная ставка (500 = 5%) — AI меняет в рамках [1%-20%] |
-| **collateral_ratio_bps** | Залоговый коэффициент (15000 = 150%) — сколько SOL нужно для займа |
-| **confidence** | Уверенность AI в решении (0-100%) |
-| **risk_level** | low / medium / high / critical |
-| **risk_score** | Числовой риск (0-100), композит из 5 факторов |
-| **reasoning_en / reasoning_ru** | Объяснение решения на двух языках |
+### Safety (7 уровней защиты)
+1. **AI Prompt** — жёсткие рамки в промпте Gemini
+2. **Python Validator** — 11 правил ДО отправки TX
+3. **On-chain Guards** — контракт проверяет bounds, cooldown, max change
+4. **Emergency Freeze** — AI или authority может заморозить
+5. **Auto-rate (Safety Net)** — контракт САМ повышает ставку при util > 85%
+6. **Insurance Fund** — резерв на покрытие bad debt
+7. **GuardrailConfig PDA** — параметры защиты в отдельном on-chain аккаунте
 
-### Технические индикаторы (Quant Engine)
-
-| Индикатор | Что измеряет | Как влияет |
-|-----------|-------------|------------|
-| **RSI** (0-100) | Перекупленность/перепроданность | >70 = скоро падение → повысить залог |
-| **MACD** | Тренд (bullish/bearish/neutral) | Bearish → повысить ставку |
-| **Bollinger Bands** | Цена в норме или за пределами | Above → перегрев → защита |
-| **ATR** | Волатильность | High → повысить залог |
-| **EMA Crossover** | Краткосрочный тренд | Bearish cross → осторожность |
-
-### ML модели
-
-| Модель | Тип | Что делает |
-|--------|-----|------------|
-| **RandomForest** | Классификатор | Прогноз: up/down/sideways + вероятности + feature importance |
-| **IsolationForest** | Детектор аномалий | Обнаруживает ненормальное поведение рынка |
-| **EWMA** | Волатильность | Прогноз волатильности (low/medium/high) |
-| **Risk Scorer** | Композит | Объединяет все сигналы в единый risk_score 0-100 |
-| **Utilization Predictor** | Прогноз | Предсказывает утилизацию пула |
-
-### Sentiment (анализ новостей)
-
-| Поле | Описание |
-|------|----------|
-| **sentiment_score** | Настроение рынка (-1.0 до +1.0) |
-| **sentiment_severity** | noise / notable / serious / critical |
-| **summary** | Краткая сводка на EN и RU |
-
-**Фильтрация шума:** Твиты Маска/Трампа, мемы, хайп → severity="noise" → ИГНОРИРУЕТСЯ.
-Серьёзные события (регуляции, санкции, хаки) → severity="serious"/"critical" → ВЛИЯЕТ на решение.
-
-### AI Active Actions (не только параметры)
-
-| Действие | Когда | TX |
-|----------|-------|-----|
-| **update_parameters** | Каждый цикл | Меняет ставку, залог, лимит |
-| **set_sol_price** | Каждый цикл | Обновляет цену SOL on-chain |
-| **liquidate** | Позиция undercollateralized | Ликвидирует позицию |
-| **emergency_freeze** | risk > 90 или аномалия | Замораживает протокол |
+### Frontend
+- **Dashboard** — доход лендера, стоимость займа, health factor, страховой фонд, SOL цена
+- **Activity** — пагинация + фильтры (все/займы/возвраты/залоги)
+- **AI Decisions** — фильтр по risk level с количеством, пагинация
+- **Simulator** — "что если" для AI решений
+- **Leaderboard** — топ депозиторов, заёмщиков, keepers
+- **Risk Dashboard** — рыночные метрики, очередь ликвидаций
 
 ---
 
-## Guard Rails (защита от ошибок AI)
+## Guard Rails
 
 ```
-4 уровня защиты:
+7 уровней защиты:
 
-Уровень 1: Промпт       — Gemini получает жёсткие рамки
+Уровень 1: Промпт       — Gemini получает жёсткие рамки (ставка 1-20%, залог 120-200%)
 Уровень 2: Validator     — Python проверяет ДО отправки TX (11 правил)
 Уровень 3: Контракт      — Solana проверяет В МОМЕНТ исполнения
-Уровень 4: Emergency     — authority может заморозить, AI может freeze при аномалии
+Уровень 4: Emergency     — authority / AI может заморозить протокол
+Уровень 5: Auto-rate     — контракт САМ повышает ставку при util > 85%
+Уровень 6: Insurance     — 10% interest -> резерв на bad debt
+Уровень 7: GuardrailConfig — параметры защиты в отдельном PDA
 
 Правила контракта:
-├── Ставка: [min, max] границы (по умолчанию 1%-20%)
-├── Залог: [min, max] границы (120%-200%)
-├── Изменение за раз: ≤ 20% от текущего значения
-├── Cooldown: 10 минут между обновлениями
-├── Только AI-агент может вызвать update_parameters (has_one constraint)
-├── Withdraw и repay ВСЕГДА доступны (даже при freeze)
-└── On-chain лог: reasoning + confidence + risk_level
++-- Ставка: [min, max] границы (1%-20%)
++-- Залог: [min, max] границы (120%-200%)
++-- Изменение за раз: <= 20% от текущего
++-- Cooldown: 60 сек между обновлениями
++-- Только AI-агент может вызвать update_parameters
++-- Withdraw и repay ВСЕГДА доступны (даже при freeze)
++-- On-chain лог: reasoning + confidence + risk_level
 ```
 
 ---
@@ -169,7 +158,7 @@ cp .env.example .env
 cd docker
 docker compose --env-file ../.env up --build -d
 
-# Frontend:  http://your-ip (через nginx)
+# Frontend:  http://your-ip (nginx)
 # Swagger:   http://your-ip/api/docs
 # WebSocket: ws://your-ip/ws
 ```
@@ -200,90 +189,62 @@ cd frontend && npm install && npm run dev
 |-------|-----|----------|
 | GET | `/api/health` | Статус |
 | GET | `/api/pool/state` | Состояние пула (on-chain) |
-| GET | `/api/pool/stats` | Статистика (USD) |
+| GET | `/api/pool/stats` | Статистика (USD, APY, insurance) |
 | GET | `/api/decisions/` | AI решения (пагинация, фильтр risk_level) |
-| GET | `/api/decisions/{id}` | Одно решение (с ML метриками) |
 | GET | `/api/analytics/rate-history` | История ставок |
 | GET | `/api/analytics/risk-history` | История рисков |
+| GET | `/api/activity/` | Операции (пагинация, offset) |
+| GET | `/api/risk/dashboard` | Risk dashboard (все метрики) |
+| GET | `/api/risk/liquidation-queue` | Очередь ликвидаций |
+| GET | `/api/leaderboard/{type}` | Лидерборд (depositors/borrowers/keepers) |
+| POST | `/api/ai/simulate` | Симуляция AI решения |
+| GET | `/api/system/status` | Production readiness |
 | WS | `/ws` | Real-time обновления |
 
 ---
 
-## Смарт-контракт: инструкции
+## Смарт-контракт
 
 | Инструкция | Кто | Описание |
 |------------|-----|----------|
 | `initialize_pool` | Authority | Создание пула |
 | `set_sol_price` | Authority / AI | Обновление цены SOL/USD |
-| `deposit` | User | Внести aiUSDC |
-| `withdraw` | User | Вывести aiUSDC (всегда доступно) |
-| `deposit_collateral` | User | Внести SOL залог |
-| `withdraw_collateral` | User | Забрать SOL (если нет займа) |
-| `borrow` | User | Займ aiUSDC под SOL |
-| `repay` | User | Вернуть aiUSDC (всегда доступно) |
-| `accrue_interest` | Anyone | Начислить проценты |
-| `liquidate` | Anyone / AI | Ликвидация |
-| `update_parameters` | AI Agent | AI меняет параметры |
-| `emergency_freeze` | Authority | Заморозка |
+| `deposit` / `withdraw` | User | Депозит / вывод aiUSDC |
+| `deposit_collateral` / `withdraw_collateral` | User | Залог SOL |
+| `borrow` / `repay` | User | Займ / возврат aiUSDC |
+| `accrue_interest` | Anyone | Начисление процентов |
+| `liquidate` | Anyone / AI | Partial liquidation + keeper reward |
+| `update_parameters` | AI Agent | AI меняет ставку, залог, лимит |
+| `emergency_freeze` / `unfreeze` | Authority | Заморозка |
 | `ai_emergency_freeze` | AI Agent | AI заморозка при аномалии |
-| `emergency_unfreeze` | Authority | Разморозка |
+| `get_health_factor` | Anyone | View health factor позиции |
+| `init_guardrails` / `update_guardrails` | Authority | Управление guard rails PDA |
+| `migrate_pool` | Authority | Миграция layout пула |
+| `cover_bad_debt` | Authority | Покрытие bad debt из insurance |
 
 ---
 
-## Демо-сценарии
+## Security
 
-### Сценарий 1: Нормальная работа
-1. Дашборд: ставка 4.8%, mood=Calm, deposits=$10K
-2. Ждём 11 мин → AI цикл → ставка изменилась
-3. AI Decisions: RSI=56, MACD=bullish, risk=low → "Снизил ставку для привлечения заёмщиков"
-4. TX ссылка → Solana Explorer → proof on-chain
+### AI Agent Keypair
+- Devnet: plain JSON file (`keys/ai-agent.json`)
+- Mainnet plan: HSM (Hardware Security Module) или multisig
+- Agent can ONLY: update_parameters, set_sol_price, liquidate, freeze
+- Agent CANNOT: withdraw funds, close accounts, change authority
 
-### Сценарий 2: Guard rails
-1. AI пытается поставить ставку 50% → контракт отклоняет: RateTooHigh
-2. AI пытается обновить раньше 10 мин → CooldownActive
-3. Чужой кошелёк пытается вызвать update_parameters → Unauthorized
+### Oracle
+- Devnet: AI agent sets price via CoinGecko -> set_sol_price
+- Mainnet plan: Pyth Oracle on-chain + 3-level fallback (Pyth -> AI/CoinGecko -> last known)
+- Staleness check: price > 5 min -> operations limited
 
-### Сценарий 3: Emergency
-1. Risk score > 90 → AI вызывает emergency_freeze
-2. Протокол заморожен → deposit/borrow заблокированы
-3. Withdraw/repay работают (пользователи могут забрать деньги)
-4. Authority вызывает emergency_unfreeze → протокол работает
-
----
-
-## Переменные окружения
-
-```bash
-# Solana
-PROGRAM_ID=...              # ID задеплоенной программы
-POOL_AUTHORITY=...          # Pubkey authority
-SOLANA_RPC_URL=https://api.devnet.solana.com
-
-# AI
-GEMINI_API_KEY=...          # Google Gemini API
-GEMINI_MODEL=gemini-2.0-flash
-
-# Security (генерировать: openssl rand -hex 32)
-JWT_SECRET=...
-POSTGRES_PASSWORD=...
-REDIS_PASSWORD=...
-```
+### Known Limitations (devnet)
+- No audit performed
+- Single oracle source (CoinGecko via AI)
+- AI agent keypair not in HSM
+- No rate limiting on RPC calls
 
 ---
 
-## Критерии хакатона
-
-| Критерий (баллы) | Как закрываем |
-|---|---|
-| **Product & Idea (20)** | Реальная проблема — статичные DeFi. AI адаптирует параметры |
-| **Technical (25)** | Anchor контракт + AI Agent (Gemini + RandomForest + EWMA) + FastAPI + React |
-| **Use of Solana (15)** | 14 инструкций, PDA, CPI, on-chain logs, events, guard rails |
-| **Innovation (15)** | Trustless AI (контракт контролирует AI), sentiment filter, 4 уровня защиты |
-| **UX (10)** | Adaptive desktop+mobile, RU/EN, AI reasoning на двух языках |
-| **Demo (10)** | Live devnet, real TX, Solana Explorer proof |
-| **Docs (5)** | README, архитектура, API docs, Swagger |
-
----
 
 ## Team
 
