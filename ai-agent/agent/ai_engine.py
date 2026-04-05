@@ -131,14 +131,58 @@ class AiEngine:
         }
 
     def _fallback_decision(self, report: dict) -> dict:
-        """Safe fallback if Gemini is unavailable — hold current params."""
+        """ML-only fallback when Gemini is unavailable.
+
+        Uses quant signals + risk score to make a decision without LLM.
+        """
+        current_rate = report.get("current_rate_bps", 500)
+        current_collateral = report.get("current_collateral_bps", 15000)
+        util = report.get("utilization", 0)
+        risk = report.get("risk_score", 50)
+        optimal_rate = report.get("optimal_rate_bps", current_rate)
+        trend = report.get("ml", {}).get("trend", {}).get("direction", "sideways")
+        vol_regime = report.get("volatility", {}).get("regime", "medium")
+
+        # Rate decision based on utilization + optimal rate
+        if util > 0.8:
+            new_rate = min(current_rate + 100, 2000)
+            reason = f"High util {util:.0%} → rate +1%"
+        elif util > 0.5:
+            # Move toward optimal rate
+            diff = optimal_rate - current_rate
+            new_rate = current_rate + max(-100, min(100, diff // 2))
+            reason = f"Util {util:.0%}, moving toward optimal {optimal_rate}bps"
+        elif util < 0.15 and trend == "down":
+            new_rate = max(current_rate - 50, 100)
+            reason = f"Low util {util:.0%} + downtrend → rate -0.5%"
+        elif risk > 60:
+            new_rate = min(current_rate + 50, 2000)
+            reason = f"Risk {risk:.0f}/100 → rate +0.5%"
+        else:
+            new_rate = current_rate
+            reason = "Signals normal, hold rate"
+
+        # Collateral decision based on volatility
+        if vol_regime == "extreme":
+            new_collateral = min(current_collateral + 1000, 20000)
+            reason += f"; extreme vol → collateral +10%"
+        elif vol_regime == "high":
+            new_collateral = min(current_collateral + 500, 20000)
+            reason += f"; high vol → collateral +5%"
+        else:
+            new_collateral = current_collateral
+
+        new_rate = max(100, min(2000, new_rate))
+        new_collateral = max(12000, min(20000, new_collateral))
+
         return {
-            "interest_rate_bps": report.get("current_rate_bps", 500),
-            "collateral_ratio_bps": 15000,
+            "interest_rate_bps": new_rate,
+            "collateral_ratio_bps": new_collateral,
             "max_borrow_limit": 10_000_000_000,
-            "reasoning_short": "Gemini unavailable — holding current parameters",
-            "reasoning_en": "Gemini unavailable — holding current parameters",
-            "reasoning_ru": "Gemini недоступен — параметры не изменены",
-            "confidence": 75,  # high enough to pass validator (min 50), signals fallback
-            "risk_level": "medium",
+            "reasoning_short": f"[ML-ONLY] {reason}",
+            "reasoning_en": f"[ML-ONLY] {reason}",
+            "reasoning_ru": f"[ML-ONLY] {reason}",
+            "confidence": 55,
+            "risk_level": "medium" if risk > 40 else "low",
+            "decision_source": "ml_fallback",
         }

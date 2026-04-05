@@ -103,6 +103,13 @@ async def get_pool_stats():
         # Step 25: Price staleness
         price_last_updated=state.get("price_last_updated", 0),
         price_stale=_is_price_stale(state.get("price_last_updated", 0)),
+        # Step 35: Insurance Fund
+        insurance_fund_pct=state.get("insurance_fund_bps", 0) / 100,
+        insurance_balance_usd=state.get("insurance_balance", 0) / 1_000_000,
+        total_bad_debt_covered_usd=state.get("total_bad_debt_covered", 0) / 1_000_000,
+        # Supply APY breakdown
+        supply_apy_daily=round(lend_rate / 365, 6),
+        supply_apy_monthly=round(lend_rate / 12, 4),
     )
 
 

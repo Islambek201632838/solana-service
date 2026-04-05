@@ -51,7 +51,14 @@ class PoolStatsResponse(BaseModel):
     auto_rate_active: bool = False
     # Step 25: Price staleness
     price_last_updated: int = 0
-    price_stale: bool = False  # True if price > 5 min old
+    price_stale: bool = False
+    # Step 35: Insurance Fund
+    insurance_fund_pct: float = 0.0
+    insurance_balance_usd: float = 0.0
+    total_bad_debt_covered_usd: float = 0.0
+    # Supply APY breakdown
+    supply_apy_daily: float = 0.0
+    supply_apy_monthly: float = 0.0
 
 
 class AiDecisionResponse(BaseModel):

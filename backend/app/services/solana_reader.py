@@ -135,6 +135,14 @@ class SolanaReader:
                 "last_danger_check": read_i64(),
                 # Step 25: Price staleness
                 "price_last_updated": read_i64(),
+                # Step 35: Insurance Fund
+                "insurance_fund_bps": read_u16(),
+                "insurance_balance": read_u64(),
+                "total_bad_debt_covered": read_u64(),
+                # Step 36: Withdrawal rate limit
+                "max_withdraw_per_epoch": read_u64(),
+                "withdrawn_this_epoch": read_u64(),
+                "current_epoch": read_u64(),
                 "bump": read_u8(),
                 "vault_bump": read_u8(),
             }
@@ -148,3 +156,86 @@ class SolanaReader:
             return pool
         except Exception as e:
             return {"error": f"Deserialization failed: {e}"}
+
+    async def get_all_positions(self) -> list[dict]:
+        """Fetch all UserPosition accounts via getProgramAccounts."""
+        try:
+            # UserPosition discriminator
+            import hashlib
+            disc = hashlib.sha256(b"account:UserPosition").digest()[:8]
+            filters = [{"memcmp": {"offset": 0, "bytes": __import__('base64').b64encode(disc).decode()}}]
+
+            body = {
+                "jsonrpc": "2.0", "id": 1,
+                "method": "getProgramAccounts",
+                "params": [
+                    self.program_id,
+                    {"encoding": "base64", "filters": filters}
+                ]
+            }
+            async with self.session.post(self.rpc_url, json=body) as resp:
+                data = await resp.json()
+
+            positions = []
+            for account in data.get("result", []):
+                raw = __import__('base64').b64decode(account["account"]["data"][0])
+                try:
+                    pos = self._deserialize_position(raw)
+                    pos["pubkey"] = account["pubkey"]
+                    positions.append(pos)
+                except Exception:
+                    continue
+            return positions
+        except Exception as e:
+            print(f"[ERROR] get_all_positions: {e}")
+            return []
+
+    def _deserialize_position(self, raw: bytes) -> dict:
+        """Deserialize UserPosition from raw bytes."""
+        import struct
+        offset = 8  # skip discriminator
+
+        def read_pubkey():
+            nonlocal offset
+            val = __import__('base58').b58encode(raw[offset:offset+32]).decode()
+            offset += 32
+            return val
+
+        def read_u64():
+            nonlocal offset
+            val = struct.unpack_from("<Q", raw, offset)[0]
+            offset += 8
+            return val
+
+        def read_i64():
+            nonlocal offset
+            val = struct.unpack_from("<q", raw, offset)[0]
+            offset += 8
+            return val
+
+        def read_u8():
+            nonlocal offset
+            val = raw[offset]
+            offset += 1
+            return val
+
+        def read_u32():
+            nonlocal offset
+            val = struct.unpack_from("<I", raw, offset)[0]
+            offset += 4
+            return val
+
+        return {
+            "owner": read_pubkey(),
+            "pool": read_pubkey(),
+            "deposited": read_u64(),
+            "borrowed": read_u64(),
+            "collateral_sol": read_u64(),
+            "borrow_timestamp": read_i64(),
+            "last_interest_update": read_i64(),
+            "accrued_interest": read_u64(),
+            "first_deposit_at": read_i64(),
+            "loyalty_tier": read_u8(),
+            "total_operations": read_u32(),
+            "bump": read_u8(),
+        }

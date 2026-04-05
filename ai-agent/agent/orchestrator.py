@@ -24,6 +24,8 @@ from models.trend_predictor import TrendPredictor
 from models.volatility_model import VolatilityModel
 from models.risk_scorer import RiskScorer
 from models.utilization_predictor import UtilizationPredictor
+from models.crash_detector import CrashDetector
+from agent.preemptive_engine import PreemptiveEngine
 
 
 class Orchestrator:
@@ -46,6 +48,8 @@ class Orchestrator:
         self.volatility_model = VolatilityModel()
         self.risk_scorer = RiskScorer()
         self.util_predictor = UtilizationPredictor()
+        self.crash_detector = CrashDetector()
+        self.preemptive = PreemptiveEngine()
 
     async def start(self):
         """Main loop — runs AI cycle every interval."""
@@ -131,6 +135,25 @@ class Orchestrator:
                   f"proba: up={trend.get('probabilities', {}).get('up', 0):.0%} "
                   f"down={trend.get('probabilities', {}).get('down', 0):.0%}")
 
+        # 3b. Crash detection
+        crash = self.crash_detector.predict(prices, volumes)
+        crash_prob = crash["crash_probability"]
+        if crash_prob > 0:
+            print(f"[CYCLE] Crash detector: {crash_prob}% probability, action={crash['action']}")
+        report_crash = crash  # save for report
+
+        # 3c. Preemptive actions
+        sentiment_score = 0  # will be updated after sentiment analysis
+        preemptive_actions = self.preemptive.evaluate(
+            crash_probability=crash_prob,
+            sentiment_score=sentiment_score,
+            volatility=ml_signals["volatility"]["volatility"],
+            utilization=pool.get("utilization", 0) * 100,
+            risk_score=ml_signals["risk_score"],
+        )
+        if preemptive_actions:
+            print(f"[CYCLE] Preemptive: {self.preemptive.summarize(preemptive_actions)}")
+
         # 4. Utilization curve
         utilization = pool.get("utilization", 0)
         util_rec = calc_optimal_rate(utilization)
@@ -150,6 +173,8 @@ class Orchestrator:
         report["technical"] = technical
         report["ml"] = ml_signals
         report["sol_price_source"] = "coingecko" if ctx["market"].get("sol_price", 0) > 0 else "onchain"
+        report["crash"] = report_crash
+        report["preemptive_actions"] = preemptive_actions
 
         # 5b. Sentiment analysis (async — runs Gemini separately)
         try:
