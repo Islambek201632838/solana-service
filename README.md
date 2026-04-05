@@ -73,8 +73,8 @@ AI-агент каждые **2 минуты**:
 
 | Компонент | Стек |
 |-----------|------|
-| Контракт | Rust + Anchor 0.32.1 (16 инструкций, 3 PDA) |
-| AI Agent | Python 3.12 + Gemini 2.0 Flash + 6 ML моделей + ML fallback |
+| Контракт | Rust + Anchor 0.32.1 (21 инструкция, 3 PDA) |
+| AI Agent | Python 3.12 + Gemini 2.0 Flash + 7 ML моделей + ML fallback |
 | Backend | FastAPI + WebSocket + aiosqlite + 10 API routers |
 | Frontend | React 19 + Vite + TailwindCSS + Recharts |
 | Инфра | Docker Compose (5 сервисов) + Nginx reverse proxy |
@@ -91,13 +91,20 @@ AI-агент каждые **2 минуты**:
 - **Insurance Fund** — 10% от interest -> резерв на bad debt
 - **Withdrawal Rate Limit** — per-epoch лимит на вывод (circuit breaker)
 - **Loyalty LTV Discount** — Bronze/Silver/Gold/Platinum, лучшие условия лояльным юзерам
+- **Adaptive Cooldown** — 60s в кризисе, 10 мин нормально, auto-expire через 30 мин
+- **Position Transfer** — two-step transfer позиций (продажа с сохранением loyalty tier)
+- **Role Separation** — Authority / AI Agent / Keeper с разными правами
 
 ### AI Intelligence
-- **6 ML моделей**: RandomForest (тренд), IsolationForest (аномалии), EWMA (волатильность), RiskScorer (композитный риск), CrashDetector (6 сигналов крэша), UtilizationPredictor
-- **Crash Detector** — предсказывает вероятность падения >10% (6 ML-сигналов)
-- **Preemptive Engine** — AI действует ДО проблемы (не после)
-- **Gemini Fallback** — ML-only режим когда LLM недоступен
-- **Utilization Trend** — AI учитывает тренд (rising/falling/stable) при решении
+- **7 ML моделей**: RandomForest (тренд), IsolationForest (аномалии), EWMA (волатильность), RiskScorer (композитный риск), CrashDetector (6 сигналов крэша), UtilizationPredictor, ModelReputation (dynamic weights)
+- **Dynamic LTV** — AI автоматически повышает/снижает залог по волатильности (calm/normal/storm/extreme)
+- **Crash Detector** — 6 ML-сигналов → crash probability → auto-freeze при >80%
+- **Preemptive Engine** — 6 триггеров → AI действует ДО проблемы
+- **Model Reputation** — rolling accuracy per model, плохие модели теряют вес автоматически
+- **Liquidation Predictor** — Monte Carlo 500 sims → 1h/4h/24h probability
+- **Credit Score** — 5 on-chain факторов → score 0-100, персонализированный LTV
+- **Gemini Fallback** — ML-only режим когда LLM недоступен (учитывает util trend)
+- **Utilization Trend** — AI учитывает тренд (rising → агрессивнее, falling → мягче)
 - **Sentiment Filter** — отделяет шум (мемы, хайп) от серьёзных событий
 
 ### Safety (7 уровней защиты)
@@ -110,12 +117,12 @@ AI-агент каждые **2 минуты**:
 7. **GuardrailConfig PDA** — параметры защиты в отдельном on-chain аккаунте
 
 ### Frontend
-- **Dashboard** — доход лендера, стоимость займа, health factor, страховой фонд, SOL цена
-- **Activity** — пагинация + фильтры (все/займы/возвраты/залоги)
-- **AI Decisions** — фильтр по risk level с количеством, пагинация
+- **Dashboard** — доход лендера, стоимость займа, health factor, страховой фонд, SOL цена, LTV mode badge, liquidation queue
+- **Deposit / Borrow** — формы с калькулятором стоимости + Credit Score виджет
+- **Activity** — пагинация + фильтры (все/займы/возвраты/залоги) с количествами
+- **AI Decisions** — фильтр по risk level с количеством + Model Performance виджет
 - **Simulator** — "что если" для AI решений
 - **Leaderboard** — топ депозиторов, заёмщиков, keepers
-- **Risk Dashboard** — рыночные метрики, очередь ликвидаций
 
 ---
 
@@ -199,6 +206,9 @@ cd frontend && npm install && npm run dev
 | GET | `/api/leaderboard/{type}` | Лидерборд (depositors/borrowers/keepers) |
 | POST | `/api/ai/simulate` | Симуляция AI решения |
 | GET | `/api/system/status` | Production readiness |
+| GET | `/api/credit-score/{wallet}` | Credit score (5 факторов) |
+| GET | `/api/ai/model-stats` | ML model performance stats |
+| GET | `/api/risk/predict/{wallet}` | Liquidation probability (Monte Carlo) |
 | WS | `/ws` | Real-time обновления |
 
 ---
@@ -221,6 +231,9 @@ cd frontend && npm install && npm run dev
 | `init_guardrails` / `update_guardrails` | Authority | Управление guard rails PDA |
 | `migrate_pool` | Authority | Миграция layout пула |
 | `cover_bad_debt` | Authority | Покрытие bad debt из insurance |
+| `activate_crisis` / `deactivate_crisis` | Authority/AI | Adaptive cooldown (crisis mode) |
+| `transfer_position` / `cancel_transfer` | User | Two-step position transfer |
+| `set_roles` | Authority | Назначить AI agent / keeper authority |
 
 ---
 

@@ -294,7 +294,10 @@ class Orchestrator:
         else:
             print("[CYCLE] TX failed (cooldown or other)")
 
-        # 10. AI Emergency Freeze if risk critical OR crash imminent
+        # 10. Auto-liquidation: scan positions and liquidate if HF < 1.0
+        await self._check_liquidations(pool_authority_pubkey, pool)
+
+        # 11. AI Emergency Freeze if risk critical OR crash imminent
         risk_score = ml_signals.get("risk_score", 0)
         is_anomaly = ml_signals.get("anomaly", {}).get("is_anomaly", False)
         should_freeze = (
@@ -370,3 +373,110 @@ class Orchestrator:
             "risk_level": risk["risk_level"],
             "risk_components": risk["components"],
         }
+
+    async def _check_liquidations(self, pool_authority: Pubkey, pool: dict):
+        """Scan all positions and liquidate undercollateralized ones."""
+        try:
+            sol_price = pool.get("sol_price_usd", 0)
+            if sol_price == 0:
+                return
+            threshold_bps = pool.get("liquidation_threshold_bps", 12000)
+            token_mint = pool.get("token_mint", "")
+
+            # Fetch all positions via getProgramAccounts
+            client = await self.tx_builder._get_client()
+            import hashlib as _hashlib
+            import base58 as _b58
+            disc = _hashlib.sha256(b"account:UserPosition").digest()[:8]
+            program_id = self.tx_builder.program_id
+
+            body = {
+                "jsonrpc": "2.0", "id": 1,
+                "method": "getProgramAccounts",
+                "params": [
+                    str(program_id),
+                    {"encoding": "base64", "filters": [
+                        {"memcmp": {"offset": 0, "bytes": _b58.b58encode(disc).decode()}}
+                    ]}
+                ]
+            }
+
+            import aiohttp
+            async with aiohttp.ClientSession() as session:
+                async with session.post(self.tx_builder.rpc_url, json=body) as resp:
+                    data = await resp.json()
+
+            accounts = data.get("result", [])
+            if not accounts:
+                return
+
+            import base64 as _b64
+            import struct as _struct
+            pool_pda, _ = self.tx_builder.derive_pool_pda(pool_authority)
+            vault_pda, _ = Pubkey.find_program_address([b"vault", bytes(pool_pda)], program_id)
+            token_program = Pubkey.from_string("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA")
+            token_mint_str = pool.get("token_mint", "")
+            token_mint_pubkey = Pubkey.from_string(token_mint_str) if token_mint_str else None
+            # AI agent's own token account for receiving liquidation proceeds
+            ata_program = Pubkey.from_string("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL")
+            if token_mint_pubkey:
+                ai_ata, _ = Pubkey.find_program_address(
+                    [bytes(self.tx_builder.keypair.pubkey()), bytes(token_program), bytes(token_mint_pubkey)],
+                    ata_program,
+                )
+            else:
+                ai_ata = None
+
+            liquidated = 0
+            for acc in accounts:
+                raw = _b64.b64decode(acc["account"]["data"][0])
+                if len(raw) < 80:
+                    continue
+                # Parse position: skip 8 disc + 32 owner + 32 pool + 8 deposited + 8 borrowed + 8 collateral
+                offset = 8
+                owner_bytes = raw[offset:offset+32]
+                offset += 64  # skip owner + pool
+                deposited = _struct.unpack_from("<Q", raw, offset)[0]; offset += 8
+                borrowed = _struct.unpack_from("<Q", raw, offset)[0]; offset += 8
+                collateral_sol = _struct.unpack_from("<Q", raw, offset)[0]; offset += 8
+
+                if borrowed == 0:
+                    continue
+
+                # Health factor
+                collateral_usd = (collateral_sol * sol_price) / 1_000_000_000
+                total_owed = borrowed / 1_000_000
+                threshold_usd = total_owed * (threshold_bps / 10000)
+                health = (collateral_usd / 1_000_000) / threshold_usd if threshold_usd > 0 else 99
+
+                if health <= 1.0 and token_mint_pubkey and ai_ata:
+                    borrower = Pubkey.from_bytes(owner_bytes)
+
+                    max_repay = borrowed // 2
+                    print(f"[CYCLE] LIQUIDATING {str(borrower)[:8]}... HF={health:.2f} debt=${total_owed:.0f}")
+                    tx = await self.tx_builder.send_liquidate(
+                        pool_authority, borrower, vault_pda, token_mint_pubkey, ai_ata, token_program, max_repay
+                    )
+                    if tx:
+                        liquidated += 1
+                        print(f"[CYCLE] Liquidated! TX={tx[:16]}")
+                        # Log to activity service
+                        try:
+                            async with aiohttp.ClientSession() as s:
+                                await s.post("http://backend:8000/api/activity/log", json={
+                                    "action": "liquidate",
+                                    "user": f"AI Agent ({str(self.tx_builder.keypair.pubkey())[:8]}...)",
+                                    "amount": total_owed,
+                                    "token": "aiUSDC",
+                                    "tx_signature": tx,
+                                    "pool_util_after": pool.get("utilization", 0) * 100,
+                                    "rate_at_time": pool.get("interest_rate_bps", 0) / 100,
+                                })
+                        except Exception:
+                            pass  # non-critical
+
+            if liquidated > 0:
+                print(f"[CYCLE] Total liquidated: {liquidated} positions")
+
+        except Exception as e:
+            print(f"[CYCLE] Liquidation scan error: {e}")

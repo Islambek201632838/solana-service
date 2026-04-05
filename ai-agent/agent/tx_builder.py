@@ -187,32 +187,36 @@ class TxBuilder:
         pool_authority: Pubkey,
         borrower: Pubkey,
         pool_vault_pda: Pubkey,
-        borrower_token_account: Pubkey,
+        token_mint: Pubkey,
+        liquidator_token_account: Pubkey,
         token_program: Pubkey,
+        max_repay_amount: int = 0,
     ) -> str | None:
         """AI agent triggers liquidation of undercollateralized position."""
         client = await self._get_client()
         pool_pda, _ = self.derive_pool_pda(pool_authority)
 
         borrower_position_pda, _ = Pubkey.find_program_address(
-            [b"user_position", bytes(pool_pda), bytes(borrower)],
+            [b"position", bytes(pool_pda), bytes(borrower)],
             self.program_id,
         )
 
         discriminator = hashlib.sha256(b"global:liquidate").digest()[:8]
+        ix_data = discriminator + struct.pack("<Q", max_repay_amount)
 
+        # Accounts order must match Liquidate struct in contract:
+        # pool, pool_vault, token_mint, borrower_position, liquidator_token_account, liquidator, token_program
         accounts = [
             AccountMeta(pool_pda, is_signer=False, is_writable=True),
-            AccountMeta(borrower_position_pda, is_signer=False, is_writable=True),
-            AccountMeta(borrower, is_signer=False, is_writable=True),
-            AccountMeta(self.keypair.pubkey(), is_signer=True, is_writable=True),
             AccountMeta(pool_vault_pda, is_signer=False, is_writable=True),
-            AccountMeta(borrower_token_account, is_signer=False, is_writable=True),
+            AccountMeta(token_mint, is_signer=False, is_writable=False),
+            AccountMeta(borrower_position_pda, is_signer=False, is_writable=True),
+            AccountMeta(liquidator_token_account, is_signer=False, is_writable=True),
+            AccountMeta(self.keypair.pubkey(), is_signer=True, is_writable=True),
             AccountMeta(token_program, is_signer=False, is_writable=False),
-            AccountMeta(Pubkey.from_string("11111111111111111111111111111111"), is_signer=False, is_writable=False),
         ]
 
-        ix = Instruction(self.program_id, discriminator, accounts)
+        ix = Instruction(self.program_id, bytes(ix_data), accounts)
 
         for attempt in range(3):
             try:

@@ -34,7 +34,8 @@ async def top_depositors(limit: int = 10):
 @router.get("/borrowers", response_model=LeaderboardResponse)
 async def top_borrowers(limit: int = 10):
     """Top borrowers by total borrow volume."""
-    items = await service.get_recent(limit=500)
+    result = await service.get_recent(limit=500)
+    items = result.get("items", [])
     user_totals: dict[str, float] = {}
     user_ops: dict[str, int] = {}
     for item in items:

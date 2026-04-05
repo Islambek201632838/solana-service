@@ -419,17 +419,108 @@ activity-sim (background)
 
 ---
 
-## Часть 8: Что делает нас уникальными
+## Часть 8: Новые фичи (Батчи 5-8)
+
+### Model Reputation (самообучающийся AI)
+
+AI не статичный — он отслеживает точность каждой модели:
+```
+После каждого цикла:
+  1. Сравнить предсказание с реальностью
+     trend_predictor сказал "down" → цена упала? → accuracy +1
+  2. Пересчитать веса
+     Точная модель → больше влияния на решение
+     Плохая модель → меньше влияния (но не 0, floor 10%)
+  3. Логировать
+     "Reputation: trend=73% anomaly=50% volatility=62% risk=80% crash=50%"
+```
+
+### Dynamic LTV (AI адаптирует залог по волатильности)
+
+```
+Волатильность   Режим     Collateral Ratio    Что происходит
+< 1%           Calm       -5% от текущего     Привлекаем заёмщиков
+1-3%           Normal     без изменений       Стандарт
+3-6%           Storm      +10%                Защита
+> 6%           Extreme    +20%                Максимальная защита
+```
+
+AI делает это АВТОМАТИЧЕСКИ каждые 2 мин, основываясь на EWMA volatility model.
+
+### Credit Score (on-chain кредитный рейтинг)
+
+5 факторов → score 0-100 → tier (Bronze/Silver/Gold/Platinum):
+```
+Фактор              Макс баллов   Пример
+Возраст аккаунта       20          3+ дня = 20
+Количество операций    20          20+ = 20
+Надёжность возврата    20          Нет долга = 20
+Без ликвидаций         20          Никогда = 20
+Размер позиции         20          2+ SOL = 20
+
+Platinum (90+): залог -15%, ставка -10%
+Gold (70-89):   залог -10%, ставка -5%
+Silver (50-69): залог -5%, ставка -2%
+Bronze (0-49):  стандартные условия
+```
+
+### Liquidation Predictor (Monte Carlo)
+
+Вместо "ликвидация когда health < 1.0" — предсказываем ЗАРАНЕЕ:
+```
+1. Берём текущий health factor и волатильность
+2. Генерируем 500 случайных ценовых путей (random walk)
+3. Считаем: в скольких путях health упал ниже 1.0?
+4. Результат: "1h: 0%, 4h: 2%, 24h: 12%"
+5. Если 24h > 30% → показываем warning + рекомендацию
+```
+
+### Adaptive Cooldown (crisis mode)
+
+```
+Нормальный режим:        Кризис:
+  Cooldown: 60 сек         Cooldown: 30 сек (crisis_cooldown.max(30))
+  Max change: ±20%         Триггер: crash_prob > 80% → AI activate_crisis
+                           Auto-expire: через 30 мин → нормальный
+```
+
+Контракт сам проверяет: `if crisis_mode && now - crisis_activated_at > 1800 → use normal cooldown`
+
+### Position Transfer (secondary market)
+
+```
+1. Seller: transfer_position(buyer_pubkey) → pending_transfer = buyer
+2. Buyer: (будущее) accept_position() → ownership меняется, loyalty tier сохраняется
+3. Seller может cancel_transfer() до принятия
+```
+
+### Role Separation
+
+```
+Роль           Может                    Не может
+Authority      freeze, set_roles,       двигать деньги юзеров
+               update guardrails
+AI Agent       update_params, price,    withdraw, close accounts
+               liquidate, freeze
+Keeper         liquidate (+ reward)     менять параметры
+```
+
+`set_roles` позволяет authority назначить отдельные ключи для AI и keeper.
+
+---
+
+## Часть 9: Что делает нас уникальными
 
 | Фича | Наше решение | Конкуренты |
 |------|-------------|-----------|
-| ML моделей | 6 работающих моделей | YieldSage: заявляют LSTM, реально заглушка |
-| Crash Detection | 6 сигналов, превентивные действия | Никто на Colosseum не делает |
-| Gemini Fallback | ML-only режим, протокол не останавливается | Все зависят от одного API |
-| Insurance Fund | 10% interest → резерв на bad debt | Только production протоколы (Marginfi) |
-| Loyalty LTV | On-chain credit score, скидка до -15% | Никто на хакатонах |
-| Partial Liquidation | Минимум для восстановления health (как Aave v3) | Большинство забирают ВСЁ |
-| Safety Net | Контракт сам повышает ставку без AI | Уникальная фича |
-| Util Trend | AI учитывает тренд (rising/falling) | Все смотрят только текущую |
-| Sentiment Filter | Отделяет шум от серьёзных событий | Никто не фильтрует шум |
-| 7 уровней защиты | Prompt → Validator → Contract → Freeze → AutoRate → Insurance → PDA | Макс 2-3 уровня у других |
+| ML моделей | 7 работающих + dynamic weights | YieldSage: заявляют LSTM, реально заглушка |
+| Crash Detection | 6 сигналов → auto-freeze | Никто на Colosseum не делает |
+| Dynamic LTV | AI меняет залог по волатильности | Все используют фиксированный |
+| Credit Score | 5 on-chain факторов → персональный LTV | Никто на хакатонах |
+| Liquidation Predictor | Monte Carlo 500 sims | Все ждут health < 1.0 |
+| Model Reputation | Self-improving AI, rolling accuracy | Статические веса у всех |
+| Adaptive Cooldown | 30s crisis / 60s normal | Фиксированный cooldown |
+| Position Transfer | Two-step с сохранением tier | Никто не делает |
+| Gemini Fallback | ML-only, протокол не останавливается | Все зависят от одного API |
+| Insurance Fund | 10% interest → резерв на bad debt | Только production (Marginfi) |
+| 7 уровней защиты | Prompt → Validator → Contract → Freeze → AutoRate → Insurance → PDA | Макс 2-3 у других |

@@ -408,30 +408,6 @@ pub mod solana_ai_lend {
         Ok(())
     }
 
-    /// Step 31: Initiate position transfer (seller side)
-    pub fn transfer_position(ctx: Context<TransferPosition>, new_owner: Pubkey) -> Result<()> {
-        let position = &mut ctx.accounts.user_position;
-        require!(position.borrowed == 0 && position.accrued_interest == 0, LendError::HasActiveBorrow);
-        require!(position.pending_transfer == Pubkey::default(), LendError::TransferAlreadyPending);
-        position.pending_transfer = new_owner;
-        emit!(PositionTransferEvent {
-            pool: position.pool,
-            from: position.owner,
-            to: new_owner,
-            initiated: true,
-            timestamp: Clock::get()?.unix_timestamp,
-        });
-        Ok(())
-    }
-
-    /// Step 31: Cancel pending transfer (seller side)
-    pub fn cancel_transfer(ctx: Context<TransferPosition>) -> Result<()> {
-        let position = &mut ctx.accounts.user_position;
-        require!(position.pending_transfer != Pubkey::default(), LendError::NoTransferPending);
-        position.pending_transfer = Pubkey::default();
-        Ok(())
-    }
-
     /// Step 26: Set protocol roles (authority only)
     pub fn set_roles(ctx: Context<EmergencyFreeze>, new_ai_agent: Option<Pubkey>, new_keeper: Option<Pubkey>) -> Result<()> {
         let pool = &mut ctx.accounts.pool;
@@ -1261,8 +1237,6 @@ pub struct UserPosition {
     pub first_deposit_at: i64,
     pub loyalty_tier: LoyaltyTier,
     pub total_operations: u32,
-    // Step 31: Position Transfer
-    pub pending_transfer: Pubkey, // Pubkey::default() = no pending transfer
     pub bump: u8,
 }
 
