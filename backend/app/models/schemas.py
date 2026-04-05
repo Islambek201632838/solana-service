@@ -44,8 +44,14 @@ class PoolStatsResponse(BaseModel):
     total_liquidations: int = 0
     mood: str = "Unknown"
     # Step 22: Health Factor + Keeper Rewards
-    pool_health_factor: float = 0.0  # aggregate health: collateral_usd / (borrows * threshold)
-    keeper_reward_pct: float = 0.0   # keeper reward in %
+    pool_health_factor: float = 0.0
+    keeper_reward_pct: float = 0.0
+    # Step 23: Safety Net
+    danger_slots: int = 0
+    auto_rate_active: bool = False
+    # Step 25: Price staleness
+    price_last_updated: int = 0
+    price_stale: bool = False  # True if price > 5 min old
 
 
 class AiDecisionResponse(BaseModel):
@@ -114,3 +120,36 @@ class HealthResponse(BaseModel):
     version: str = "0.1.0"
     solana_rpc: str = ""
     pool_readable: bool = False
+
+
+# Step 24: Production readiness
+class SystemStatusResponse(BaseModel):
+    checks: list[dict] = []
+    devnet_ready: bool = True
+    mainnet_remaining: int = 0
+
+
+# Step 30: Leaderboard
+class LeaderboardEntry(BaseModel):
+    rank: int = 0
+    user: str = ""
+    amount: float = 0.0
+    operations: int = 0
+    action_type: str = ""
+
+
+class LeaderboardResponse(BaseModel):
+    items: list[LeaderboardEntry] = []
+    total: int = 0
+
+
+# Step 34: AI Simulator
+class SimulateRequest(BaseModel):
+    new_rate_bps: int = 0
+    new_collateral_bps: int = 0
+
+
+class SimulateResponse(BaseModel):
+    impact: dict = {}
+    risk_assessment: dict = {}
+    current_state: dict = {}

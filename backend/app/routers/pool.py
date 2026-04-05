@@ -97,4 +97,18 @@ async def get_pool_stats():
         mood=state.get("mood_str", "Unknown"),
         pool_health_factor=round(pool_health, 4),
         keeper_reward_pct=keeper_reward_bps / 100,
+        # Step 23: Safety Net
+        danger_slots=state.get("danger_slots", 0),
+        auto_rate_active=state.get("auto_rate_active", False),
+        # Step 25: Price staleness
+        price_last_updated=state.get("price_last_updated", 0),
+        price_stale=_is_price_stale(state.get("price_last_updated", 0)),
     )
+
+
+def _is_price_stale(price_ts: int) -> bool:
+    """Price is stale if > 5 minutes old or never set."""
+    if price_ts == 0:
+        return True
+    import time
+    return (time.time() - price_ts) > 300

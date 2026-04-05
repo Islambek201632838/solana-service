@@ -129,6 +129,12 @@ class SolanaReader:
                 "keeper_reward_bps": read_u16(),
                 "last_update": read_i64(),
                 "update_cooldown": read_i64(),
+                # Step 23: Safety Net
+                "danger_slots": read_u64(),
+                "auto_rate_active": read_bool(),
+                "last_danger_check": read_i64(),
+                # Step 25: Price staleness
+                "price_last_updated": read_i64(),
                 "bump": read_u8(),
                 "vault_bump": read_u8(),
             }
