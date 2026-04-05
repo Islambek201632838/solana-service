@@ -3,6 +3,7 @@ import { useLang } from "../hooks/useLang";
 import AiDecisionCard from "../components/dashboard/AiDecisionCard";
 import { useAiDecisions } from "../hooks/useAiDecisions";
 import { useBreakpoint } from "../hooks/useMediaQuery";
+import ModelPerformance from "../components/dashboard/ModelPerformance";
 import type { TranslationKey } from "../lib/i18n";
 
 const RISK_FILTERS: { value: string; labelKey: TranslationKey }[] = [
@@ -73,6 +74,8 @@ export default function AiDecisions() {
           ))}
         </select>
       )}
+
+      <ModelPerformance />
 
       {loading ? (
         <div className="space-y-3">

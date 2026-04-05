@@ -75,3 +75,21 @@ export async function fetchLiquidationQueue() {
   if (!res.ok) throw new Error(`Liquidation queue: ${res.status}`);
   return res.json();
 }
+
+export async function fetchCreditScore(wallet: string) {
+  const res = await fetch(`${API_URL}/api/credit-score/${wallet}`);
+  if (!res.ok) return null;
+  return res.json();
+}
+
+export async function fetchModelStats() {
+  const res = await fetch(`${API_URL}/api/ai/model-stats`);
+  if (!res.ok) throw new Error(`Model stats: ${res.status}`);
+  return res.json();
+}
+
+export async function fetchLiquidationPredict(wallet: string) {
+  const res = await fetch(`${API_URL}/api/risk/predict/${wallet}`);
+  if (!res.ok) return null;
+  return res.json();
+}

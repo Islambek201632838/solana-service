@@ -18,11 +18,14 @@ import LiquidationQueueWidget from "./components/dashboard/LiquidationQueueWidge
 import SafetyNetBadge from "./components/dashboard/SafetyNetBadge";
 import InsuranceBadge from "./components/dashboard/InsuranceBadge";
 import SolPriceWidget from "./components/dashboard/SolPriceWidget";
+import LtvModeBadge from "./components/dashboard/LtvModeBadge";
 import { usePool } from "./hooks/usePool";
 import { useWebSocket } from "./hooks/useWebSocket";
 
 import Activity from "./pages/Activity";
 import AiDecisions from "./pages/AiDecisions";
+import Deposit from "./pages/Deposit";
+import Borrow from "./pages/Borrow";
 import Leaderboard from "./pages/Leaderboard";
 import Simulator from "./pages/Simulator";
 import SystemStatus from "./pages/SystemStatus";
@@ -46,6 +49,10 @@ function DashboardPage() {
           <SafetyNetBadge
             autoRateActive={stats?.auto_rate_active ?? false}
             dangerSlots={stats?.danger_slots ?? 0}
+            priceStale={stats?.price_stale ?? false}
+          />
+          <LtvModeBadge
+            collateralRatioPct={stats?.collateral_ratio_pct ?? 120}
             priceStale={stats?.price_stale ?? false}
           />
           <span className={`w-2 h-2 rounded-full ${wsConnected ? "bg-green-400" : "bg-red-400"}`} />
@@ -81,10 +88,11 @@ function ActivePage({ tab }: { tab: string }) {
   switch (tab) {
     case "activity": return <Activity />;
     case "decisions": return <AiDecisions />;
+    case "deposit": return <Deposit />;
+    case "borrow": return <Borrow />;
     case "leaderboard": return <Leaderboard />;
     case "simulator": return <Simulator />;
     case "system": return <SystemStatus />;
-    // risk data now shown on dashboard
     default: return <DashboardPage />;
   }
 }

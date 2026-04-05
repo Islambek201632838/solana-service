@@ -11,6 +11,8 @@ interface Props {
 
 const tabs: { id: string; labelKey: TranslationKey }[] = [
   { id: "dashboard", labelKey: "dashboard" },
+  { id: "deposit", labelKey: "deposit" },
+  { id: "borrow", labelKey: "borrow" },
   { id: "activity", labelKey: "recentActivity" },
   { id: "decisions", labelKey: "aiDecisions" },
   { id: "leaderboard", labelKey: "leaderboard" },

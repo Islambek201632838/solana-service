@@ -4,6 +4,7 @@ import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import { PublicKey, Transaction } from "@solana/web3.js";
 import { TOKEN_PROGRAM_ID, getAssociatedTokenAddress } from "@solana/spl-token";
 import BorrowForm from "../components/dashboard/BorrowForm";
+import CreditScoreWidget from "../components/dashboard/CreditScoreWidget";
 import { usePool } from "../hooks/usePool";
 import { PROGRAM_ID, derivePoolPDA, deriveVaultPDA, derivePositionPDA, BN } from "../utils/anchor";
 
@@ -86,7 +87,10 @@ export default function Borrow() {
         collateralRatio={collateralRatio}
         currentBorrowed={0}
         loading={loading}
+        borrowRatePct={state?.interest_rate_bps ? state.interest_rate_bps / 100 : 0}
       />
+
+      <CreditScoreWidget wallet={publicKey?.toString() || state?.authority || ""} />
     </div>
   );
 }
