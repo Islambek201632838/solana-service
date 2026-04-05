@@ -113,6 +113,14 @@ const translations = {
     borrowRate: "Borrow APR",
     protocolFee: "Protocol fee",
 
+    // Health Factor (step 22)
+    healthFactor: "Health Factor",
+    healthHealthy: "Healthy",
+    healthWarning: "Warning",
+    healthDanger: "Liquidation Risk",
+    keeperReward: "Keeper Reward",
+    partialLiquidation: "Partial Liquidation",
+
     // Activity
     recentActivity: "Recent Activity",
     noActivity: "No activity yet",
@@ -222,6 +230,13 @@ const translations = {
     lendRate: "Доход лендера",
     borrowRate: "Ставка займа",
     protocolFee: "Комиссия протокола",
+
+    healthFactor: "Health Factor",
+    healthHealthy: "Здоров",
+    healthWarning: "Под наблюдением",
+    healthDanger: "Риск ликвидации",
+    keeperReward: "Награда ликвидатору",
+    partialLiquidation: "Частичная ликвидация",
 
     recentActivity: "Последние операции",
     noActivity: "Нет операций",

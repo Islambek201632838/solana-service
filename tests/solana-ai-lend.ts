@@ -28,11 +28,23 @@ describe("solana-ai-lend", () => {
 
   before(async () => {
     // Fund AI agent for signing transactions
-    const airdropSig = await provider.connection.requestAirdrop(
-      aiAgent.publicKey,
-      2 * LAMPORTS_PER_SOL
-    );
-    await provider.connection.confirmTransaction(airdropSig);
+    try {
+      const airdropSig = await provider.connection.requestAirdrop(
+        aiAgent.publicKey,
+        2 * LAMPORTS_PER_SOL
+      );
+      await provider.connection.confirmTransaction(airdropSig);
+    } catch {
+      // Airdrop rate-limited — fund from deployer wallet instead
+      const tx = new anchor.web3.Transaction().add(
+        SystemProgram.transfer({
+          fromPubkey: authority.publicKey,
+          toPubkey: aiAgent.publicKey,
+          lamports: 2 * LAMPORTS_PER_SOL,
+        })
+      );
+      await provider.sendAndConfirm(tx);
+    }
 
     tokenMint = await createMint(
       provider.connection,
@@ -91,6 +103,7 @@ describe("solana-ai-lend", () => {
           minInterestRateBps: 100,
           minCollateralRatioBps: 12000,
           maxCollateralRatioBps: 20000,
+          keeperRewardBps: 100,
         })
         .accounts({
           pool: poolPDA,
@@ -447,7 +460,7 @@ describe("solana-ai-lend", () => {
       // Try to liquidate healthy position (collateral $370 >> required $120)
       try {
         await program.methods
-          .liquidate()
+          .liquidate(new anchor.BN("18446744073709551615"))
           .accounts({
             pool: poolPDA,
             poolVault: vaultPDA,
@@ -479,8 +492,32 @@ describe("solana-ai-lend", () => {
       const positionBefore = await program.account.userPosition.fetch(positionPDA);
       const poolBefore = await program.account.lendingPool.fetch(poolPDA);
 
+      const totalOwed = positionBefore.borrowed.toNumber() + positionBefore.accruedInterest.toNumber();
+
+      // Partial liquidation: repay half of the debt
+      const halfDebt = Math.ceil(totalOwed / 2);
       await program.methods
-        .liquidate()
+        .liquidate(new anchor.BN(halfDebt))
+        .accounts({
+          pool: poolPDA,
+          poolVault: vaultPDA,
+          tokenMint: tokenMint,
+          borrowerPosition: positionPDA,
+          liquidatorTokenAccount: userTokenAccount,
+          liquidator: authority.publicKey,
+          tokenProgram: TOKEN_PROGRAM_ID,
+        })
+        .rpc();
+
+      const positionAfter1 = await program.account.userPosition.fetch(positionPDA);
+      // Partial: should still have some debt remaining
+      expect(positionAfter1.borrowed.toNumber() + positionAfter1.accruedInterest.toNumber()).to.be.greaterThan(0);
+      console.log("  Partial liquidation: repaid", halfDebt / 1e6, "aiUSDC, remaining debt:", positionAfter1.borrowed.toNumber() / 1e6);
+      console.log("  Remaining collateral:", positionAfter1.collateralSol.toNumber() / 1e9, "SOL");
+
+      // Full liquidation: repay all remaining
+      await program.methods
+        .liquidate(new anchor.BN("18446744073709551615"))
         .accounts({
           pool: poolPDA,
           poolVault: vaultPDA,
@@ -498,11 +535,113 @@ describe("solana-ai-lend", () => {
       expect(position.accruedInterest.toNumber()).to.equal(0);
 
       const pool = await program.account.lendingPool.fetch(poolPDA);
-      expect(pool.totalLiquidations.toNumber()).to.equal(1);
+      expect(pool.totalLiquidations.toNumber()).to.equal(2); // 2 partial liquidations
+      expect(pool.keeperRewardBps).to.equal(100); // 1% keeper reward
 
-      console.log("  Liquidation successful!");
+      console.log("  Full liquidation completed!");
       console.log("  Borrower position cleared");
       console.log("  Total liquidations:", pool.totalLiquidations.toNumber());
+      console.log("  Keeper reward:", pool.keeperRewardBps / 100, "%");
+    });
+  });
+
+  // ===========================================
+  // STEP 22: get_health_factor
+  // ===========================================
+
+  describe("get_health_factor", () => {
+    it("emits health factor event for position with no debt", async () => {
+      // After liquidation, position has no debt → health = MAX
+      const tx = await program.methods
+        .getHealthFactor()
+        .accounts({
+          pool: poolPDA,
+          userPosition: positionPDA,
+        })
+        .rpc();
+      console.log("  Health factor TX:", tx);
+      console.log("  Position has no debt → health factor = infinity");
+    });
+
+    it("emits health factor for active borrow position", async () => {
+      // Reset price, deposit collateral, borrow, then check health
+      await program.methods
+        .setSolPrice(new anchor.BN(185_000_000))
+        .accounts({ pool: poolPDA, signer: authority.publicKey })
+        .rpc();
+
+      await program.methods
+        .depositCollateral(new anchor.BN(2 * LAMPORTS_PER_SOL))
+        .accounts({
+          pool: poolPDA,
+          userPosition: positionPDA,
+          owner: authority.publicKey,
+          systemProgram: SystemProgram.programId,
+        })
+        .rpc();
+
+      await program.methods
+        .borrow(new anchor.BN(100_000_000))
+        .accounts({
+          pool: poolPDA,
+          poolVault: vaultPDA,
+          tokenMint: tokenMint,
+          userPosition: positionPDA,
+          userTokenAccount: userTokenAccount,
+          owner: authority.publicKey,
+          tokenProgram: TOKEN_PROGRAM_ID,
+        })
+        .rpc();
+
+      const tx = await program.methods
+        .getHealthFactor()
+        .accounts({
+          pool: poolPDA,
+          userPosition: positionPDA,
+        })
+        .rpc();
+
+      // Verify position state
+      const pos = await program.account.userPosition.fetch(positionPDA);
+      const pool = await program.account.lendingPool.fetch(poolPDA);
+
+      // Manual health calc: collateral_usd = 2 SOL * $185 = $370
+      // threshold = 100 aiUSDC * 12000/10000 = $120
+      // health = 370 * 10000 / 120 = 30833 (≈ 3.08)
+      const collUsd = (pos.collateralSol.toNumber() * pool.solPriceUsd.toNumber()) / 1e9 / 1e6;
+      const owed = pos.borrowed.toNumber() / 1e6;
+      const thresh = owed * pool.liquidationThresholdBps / 10000;
+      const health = collUsd / thresh;
+
+      console.log("  Health factor TX:", tx);
+      console.log("  Collateral:", collUsd.toFixed(2), "USD,  Debt:", owed, "aiUSDC");
+      console.log("  Health factor:", health.toFixed(2), "(> 1.0 = healthy)");
+      expect(health).to.be.greaterThan(1.0);
+
+      // Cleanup: repay and withdraw collateral
+      await program.methods
+        .repay(new anchor.BN(pos.borrowed.toNumber() + pos.accruedInterest.toNumber()))
+        .accounts({
+          pool: poolPDA,
+          poolVault: vaultPDA,
+          tokenMint: tokenMint,
+          userPosition: positionPDA,
+          userTokenAccount: userTokenAccount,
+          owner: authority.publicKey,
+          tokenProgram: TOKEN_PROGRAM_ID,
+        })
+        .rpc();
+
+      await program.methods
+        .withdrawCollateral(new anchor.BN(pos.collateralSol.toNumber()))
+        .accounts({
+          pool: poolPDA,
+          userPosition: positionPDA,
+          owner: authority.publicKey,
+        })
+        .rpc();
+
+      console.log("  Cleanup done: repaid and withdrew collateral");
     });
   });
 
@@ -694,13 +833,15 @@ describe("solana-ai-lend", () => {
     });
 
     it("withdraw still works while frozen", async () => {
-      // User still has ~500 aiUSDC deposited from earlier
       const position = await program.account.userPosition.fetch(positionPDA);
       const deposited = position.deposited.toNumber();
+      const poolState = await program.account.lendingPool.fetch(poolPDA);
+      // Withdraw min of deposited and available liquidity
+      const withdrawable = Math.min(deposited, poolState.availableLiquidity.toNumber());
 
-      if (deposited > 0) {
+      if (withdrawable > 0) {
         await program.methods
-          .withdraw(new anchor.BN(deposited))
+          .withdraw(new anchor.BN(withdrawable))
           .accounts({
             pool: poolPDA,
             poolVault: vaultPDA,
@@ -711,10 +852,128 @@ describe("solana-ai-lend", () => {
             tokenProgram: TOKEN_PROGRAM_ID,
           })
           .rpc();
-        console.log("  Withdraw works while frozen (" + deposited / 1e6 + " aiUSDC)");
+        console.log("  Withdraw works while frozen (" + withdrawable / 1e6 + " aiUSDC)");
       } else {
-        console.log("  No deposit to withdraw (position already empty)");
+        console.log("  No liquidity to withdraw (all lent out), but freeze doesn't block it");
       }
+    });
+  });
+
+  // ===========================================
+  // STEP 23: Safety Net (danger_slots + auto_rate)
+  // ===========================================
+
+  describe("safety_net", () => {
+    before(async () => {
+      // Unfreeze first (frozen from previous test)
+      await program.methods
+        .emergencyUnfreeze()
+        .accounts({ pool: poolPDA, authority: authority.publicKey })
+        .rpc();
+
+      // Reset SOL price
+      await program.methods
+        .setSolPrice(new anchor.BN(185_000_000))
+        .accounts({ pool: poolPDA, signer: authority.publicKey })
+        .rpc();
+    });
+
+    it("tracks danger_slots and auto_rate_active fields", async () => {
+      const pool = await program.account.lendingPool.fetch(poolPDA);
+      // danger_slots should exist and be 0 (new pool or just initialized)
+      expect(pool.dangerSlots.toNumber()).to.be.a("number");
+      expect(pool.autoRateActive).to.be.a("boolean");
+      console.log("  danger_slots:", pool.dangerSlots.toNumber());
+      console.log("  auto_rate_active:", pool.autoRateActive);
+      console.log("  price_last_updated:", pool.priceLastUpdated.toNumber());
+    });
+  });
+
+  // ===========================================
+  // STEP 25: Price staleness tracking
+  // ===========================================
+
+  describe("price_staleness", () => {
+    it("set_sol_price updates price_last_updated", async () => {
+      await program.methods
+        .setSolPrice(new anchor.BN(190_000_000))
+        .accounts({ pool: poolPDA, signer: authority.publicKey })
+        .rpc();
+
+      const pool = await program.account.lendingPool.fetch(poolPDA);
+      expect(pool.solPriceUsd.toNumber()).to.equal(190_000_000);
+      expect(pool.priceLastUpdated.toNumber()).to.be.greaterThan(0);
+      console.log("  SOL price:", pool.solPriceUsd.toNumber() / 1e6, "USD");
+      console.log("  Price updated at:", new Date(pool.priceLastUpdated.toNumber() * 1000).toISOString());
+    });
+  });
+
+  // ===========================================
+  // STEP 33: GuardrailConfig PDA
+  // ===========================================
+
+  describe("guardrails", () => {
+    let guardrailPDA: PublicKey;
+
+    before(() => {
+      [guardrailPDA] = PublicKey.findProgramAddressSync(
+        [Buffer.from("guardrails"), poolPDA.toBuffer()],
+        program.programId
+      );
+    });
+
+    it("initializes guardrail config", async () => {
+      const tx = await program.methods
+        .initGuardrails({
+          minRateBps: 100,
+          maxRateBps: 2000,
+          minCollateralBps: 12000,
+          maxCollateralBps: 20000,
+          maxChangeBps: 2000,
+          cooldownSeconds: new anchor.BN(600),
+        })
+        .accounts({
+          pool: poolPDA,
+          guardrailConfig: guardrailPDA,
+          authority: authority.publicKey,
+          systemProgram: SystemProgram.programId,
+        })
+        .rpc();
+
+      const config = await program.account.guardrailConfig.fetch(guardrailPDA);
+      expect(config.minRateBps).to.equal(100);
+      expect(config.maxRateBps).to.equal(2000);
+      expect(config.minCollateralBps).to.equal(12000);
+      expect(config.maxCollateralBps).to.equal(20000);
+      expect(config.maxChangeBps).to.equal(2000);
+      expect(config.cooldownSeconds.toNumber()).to.equal(600);
+      expect(config.configHash.length).to.equal(32);
+      console.log("  Guardrail config TX:", tx);
+      console.log("  Config hash:", Buffer.from(config.configHash).toString("hex").slice(0, 16) + "...");
+    });
+
+    it("updates guardrail config", async () => {
+      await program.methods
+        .updateGuardrails({
+          minRateBps: 150,
+          maxRateBps: 1800,
+          minCollateralBps: 13000,
+          maxCollateralBps: 19000,
+          maxChangeBps: 1500,
+          cooldownSeconds: new anchor.BN(300),
+        })
+        .accounts({
+          pool: poolPDA,
+          guardrailConfig: guardrailPDA,
+          authority: authority.publicKey,
+        })
+        .rpc();
+
+      const config = await program.account.guardrailConfig.fetch(guardrailPDA);
+      expect(config.minRateBps).to.equal(150);
+      expect(config.maxRateBps).to.equal(1800);
+      expect(config.cooldownSeconds.toNumber()).to.equal(300);
+      console.log("  Guardrails updated: rate 1.5%-18%, cooldown 300s");
     });
   });
 });

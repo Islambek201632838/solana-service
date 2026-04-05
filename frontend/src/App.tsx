@@ -15,6 +15,7 @@ import ProtocolMoodBadge from "./components/dashboard/ProtocolMoodBadge";
 import RateChart from "./components/dashboard/RateChart";
 import AiDecisionCard from "./components/dashboard/AiDecisionCard";
 import ActivityFeed from "./components/dashboard/ActivityFeed";
+import HealthFactorBar from "./components/dashboard/HealthFactorBar";
 import { usePool } from "./hooks/usePool";
 import { useAiDecisions } from "./hooks/useAiDecisions";
 import { useWebSocket } from "./hooks/useWebSocket";
@@ -45,6 +46,10 @@ function DashboardPage() {
       </div>
 
       <PoolStats stats={stats} loading={loading} />
+      <HealthFactorBar
+        healthFactor={stats?.pool_health_factor ?? 0}
+        keeperRewardPct={stats?.keeper_reward_pct ?? 0}
+      />
       <RateChart />
 
       <div>

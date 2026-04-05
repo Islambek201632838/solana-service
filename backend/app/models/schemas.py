@@ -43,6 +43,9 @@ class PoolStatsResponse(BaseModel):
     total_ai_updates: int = 0
     total_liquidations: int = 0
     mood: str = "Unknown"
+    # Step 22: Health Factor + Keeper Rewards
+    pool_health_factor: float = 0.0  # aggregate health: collateral_usd / (borrows * threshold)
+    keeper_reward_pct: float = 0.0   # keeper reward in %
 
 
 class AiDecisionResponse(BaseModel):

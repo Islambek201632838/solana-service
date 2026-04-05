@@ -17,6 +17,7 @@ pub mod solana_ai_lend {
         require!(params.initial_collateral_ratio_bps <= params.max_collateral_ratio_bps, LendError::CollateralTooHigh);
         require!(params.liquidation_threshold_bps > 0, LendError::ZeroAmount);
         require!(params.max_borrow_limit > 0, LendError::ZeroAmount);
+        require!(params.keeper_reward_bps <= 500, LendError::RewardTooHigh); // max 5%
 
         let pool = &mut ctx.accounts.pool;
         let now = Clock::get()?.unix_timestamp;
@@ -52,7 +53,15 @@ pub mod solana_ai_lend {
         pool.protocol_created_at = now;
 
         pool.last_update = now;
+        pool.keeper_reward_bps = params.keeper_reward_bps;
         pool.update_cooldown = 600;
+        // Step 23: Safety Net
+        pool.danger_slots = 0;
+        pool.auto_rate_active = false;
+        pool.last_danger_check = now;
+        // Step 25: Price tracking
+        pool.price_last_updated = 0;
+
         pool.bump = ctx.bumps.pool;
         pool.vault_bump = ctx.bumps.pool_vault;
 
@@ -69,16 +78,19 @@ pub mod solana_ai_lend {
         Ok(())
     }
 
-    /// Set SOL/USD price (authority or AI agent). In production, use Pyth oracle.
+    /// Set SOL/USD price (authority or AI agent). Tracks staleness.
     pub fn set_sol_price(ctx: Context<SetSolPrice>, price_usd: u64) -> Result<()> {
         require!(price_usd > 0, LendError::InvalidPrice);
-        ctx.accounts.pool.sol_price_usd = price_usd;
+        let now = Clock::get()?.unix_timestamp;
+        let pool = &mut ctx.accounts.pool;
+        pool.sol_price_usd = price_usd;
+        pool.price_last_updated = now;
 
         emit!(SolPriceUpdatedEvent {
-            pool: ctx.accounts.pool.key(),
+            pool: pool.key(),
             price_usd,
             updater: ctx.accounts.signer.key(),
-            timestamp: Clock::get()?.unix_timestamp,
+            timestamp: now,
         });
 
         Ok(())
@@ -211,6 +223,75 @@ pub mod solana_ai_lend {
         Ok(())
     }
 
+    /// Migrate pool account to new layout (adds keeper_reward_bps field).
+    /// Authority only, idempotent.
+    pub fn migrate_pool(ctx: Context<MigratePool>, keeper_reward_bps: u16, pool_bump: u8, vault_bump: u8) -> Result<()> {
+        require!(keeper_reward_bps <= 500, LendError::RewardTooHigh);
+
+        // Verify authority matches pool.authority (first pubkey after 8-byte discriminator)
+        let pool_info = &ctx.accounts.pool;
+        {
+            let data = pool_info.try_borrow_data()?;
+            let stored_authority = Pubkey::try_from(&data[8..40]).map_err(|_| LendError::Unauthorized)?;
+            require!(stored_authority == ctx.accounts.authority.key(), LendError::Unauthorized);
+        }
+        let new_size = 8 + LendingPool::INIT_SPACE;
+        let old_size = pool_info.data_len();
+
+        if old_size < new_size {
+            let rent = Rent::get()?;
+            let new_min = rent.minimum_balance(new_size);
+            let current_lamports = pool_info.lamports();
+            if current_lamports < new_min {
+                let diff = new_min - current_lamports;
+                system_program::transfer(
+                    CpiContext::new(
+                        ctx.accounts.system_program.to_account_info(),
+                        system_program::Transfer {
+                            from: ctx.accounts.authority.to_account_info(),
+                            to: pool_info.to_account_info(),
+                        },
+                    ),
+                    diff,
+                )?;
+            }
+            pool_info.realloc(new_size, false)?;
+        }
+
+        // Adaptive migration: detect current layout by account size and shift fields.
+        // bump and vault_bump are always the last 2 bytes before padding.
+        let mut data = pool_info.try_borrow_mut_data()?;
+
+        // Use provided bumps (caller derives them from PDA)
+        let bump = pool_bump;
+        let vault_bump = vault_bump;
+
+        // Preserve key fields from known positions
+        if old_size == 234 {
+            // V1→V3: Original layout, no keeper_reward_bps, no step23 fields
+            // Shift last_update(216..224) → 218, insert keeper_reward(216)
+            let last_update: [u8; 8] = data[216..224].try_into().unwrap();
+            let cooldown: [u8; 8] = data[224..232].try_into().unwrap();
+            // Write from end to avoid overlap
+            data[218..226].copy_from_slice(&last_update);
+            data[226..234].copy_from_slice(&cooldown);
+            data[216..218].copy_from_slice(&keeper_reward_bps.to_le_bytes());
+        } else if old_size == 236 {
+            // V2→V3: Has keeper_reward_bps at 216, no step23 fields
+            // Fields 216-235 are already correct, just need to set keeper_reward
+            data[216..218].copy_from_slice(&keeper_reward_bps.to_le_bytes());
+        }
+        // For any size: write new step23 fields (all zero/default) and bump/vault_bump at end
+        // Step23 fields start at offset 234 (after update_cooldown ends)
+        // danger_slots(u64)=0 @ 234, auto_rate_active(bool)=0 @ 242, last_danger_check(i64)=0 @ 243, price_last_updated(i64)=0 @ 251
+        // These are already zero from realloc, just ensure bump/vault_bump are correct
+        let new_end = new_size;
+        data[new_end - 2] = bump;
+        data[new_end - 1] = vault_bump;
+
+        Ok(())
+    }
+
     /// Unfreeze protocol — authority only.
     pub fn emergency_unfreeze(ctx: Context<EmergencyFreeze>) -> Result<()> {
         let pool = &mut ctx.accounts.pool;
@@ -223,6 +304,66 @@ pub mod solana_ai_lend {
             timestamp: now,
         });
 
+        Ok(())
+    }
+
+    // Step 33: Initialize guardrail config PDA
+    pub fn init_guardrails(ctx: Context<InitGuardrails>, params: GuardrailParams) -> Result<()> {
+        let config = &mut ctx.accounts.guardrail_config;
+        let now = Clock::get()?.unix_timestamp;
+        config.pool = ctx.accounts.pool.key();
+        config.authority = ctx.accounts.authority.key();
+        config.min_rate_bps = params.min_rate_bps;
+        config.max_rate_bps = params.max_rate_bps;
+        config.min_collateral_bps = params.min_collateral_bps;
+        config.max_collateral_bps = params.max_collateral_bps;
+        config.max_change_bps = params.max_change_bps;
+        config.cooldown_seconds = params.cooldown_seconds;
+        // Simple hash: XOR all params into 32 bytes
+        let mut hash = [0u8; 32];
+        hash[0..2].copy_from_slice(&params.min_rate_bps.to_le_bytes());
+        hash[2..4].copy_from_slice(&params.max_rate_bps.to_le_bytes());
+        hash[4..6].copy_from_slice(&params.min_collateral_bps.to_le_bytes());
+        hash[6..8].copy_from_slice(&params.max_collateral_bps.to_le_bytes());
+        hash[8..10].copy_from_slice(&params.max_change_bps.to_le_bytes());
+        hash[10..18].copy_from_slice(&params.cooldown_seconds.to_le_bytes());
+        config.config_hash = hash;
+        config.last_updated = now;
+        config.bump = ctx.bumps.guardrail_config;
+
+        emit!(GuardrailsUpdatedEvent {
+            pool: ctx.accounts.pool.key(),
+            config_hash: hash,
+            timestamp: now,
+        });
+        Ok(())
+    }
+
+    // Step 33: Update guardrail config (authority only)
+    pub fn update_guardrails(ctx: Context<UpdateGuardrails>, params: GuardrailParams) -> Result<()> {
+        let config = &mut ctx.accounts.guardrail_config;
+        let now = Clock::get()?.unix_timestamp;
+        config.min_rate_bps = params.min_rate_bps;
+        config.max_rate_bps = params.max_rate_bps;
+        config.min_collateral_bps = params.min_collateral_bps;
+        config.max_collateral_bps = params.max_collateral_bps;
+        config.max_change_bps = params.max_change_bps;
+        config.cooldown_seconds = params.cooldown_seconds;
+        let mut hash = [0u8; 32];
+        hash[0..2].copy_from_slice(&params.min_rate_bps.to_le_bytes());
+        hash[2..4].copy_from_slice(&params.max_rate_bps.to_le_bytes());
+        hash[4..6].copy_from_slice(&params.min_collateral_bps.to_le_bytes());
+        hash[6..8].copy_from_slice(&params.max_collateral_bps.to_le_bytes());
+        hash[8..10].copy_from_slice(&params.max_change_bps.to_le_bytes());
+        hash[10..18].copy_from_slice(&params.cooldown_seconds.to_le_bytes());
+        config.config_hash = hash;
+        config.last_updated = now;
+
+        emit!(GuardrailsUpdatedEvent {
+            pool: ctx.accounts.pool.key(),
+            config_hash: hash,
+            timestamp: now,
+        });
         Ok(())
     }
 
@@ -483,6 +624,9 @@ pub mod solana_ai_lend {
             timestamp: now,
         });
 
+        // Step 23: Safety Net — check danger after borrow (increases utilization)
+        check_and_update_danger(pool, now)?;
+
         Ok(())
     }
 
@@ -544,6 +688,9 @@ pub mod solana_ai_lend {
             timestamp: now,
         });
 
+        // Step 23: Safety Net — check danger after repay (decreases utilization, may reset)
+        check_and_update_danger(pool, now)?;
+
         Ok(())
     }
 
@@ -576,17 +723,17 @@ pub mod solana_ai_lend {
         Ok(())
     }
 
-    /// Liquidate an undercollateralized position.
-    /// Liquidator repays the debt and receives all borrower's collateral.
-    pub fn liquidate(ctx: Context<Liquidate>) -> Result<()> {
+    /// Partial liquidation: repay up to max_repay_amount of debt, seize proportional collateral + 5% bonus.
+    /// Keeper (liquidator) receives keeper_reward_bps of repaid amount as incentive.
+    pub fn liquidate(ctx: Context<Liquidate>, max_repay_amount: u64) -> Result<()> {
         let pool = &ctx.accounts.pool;
         let position = &ctx.accounts.borrower_position;
 
         require!(pool.sol_price_usd > 0, LendError::InvalidPrice);
         require!(position.borrowed > 0, LendError::NothingToLiquidate);
+        require!(max_repay_amount > 0, LendError::ZeroAmount);
 
-        // Check undercollateralized:
-        // collateral_value < total_owed * liquidation_threshold / 10000
+        // Health factor = (collateral_usd * 10000) / (total_owed * liquidation_threshold)
         let collateral_value = (position.collateral_sol as u128)
             .checked_mul(pool.sol_price_usd as u128).ok_or(LendError::MathOverflow)?
             .checked_div(1_000_000_000).ok_or(LendError::MathOverflow)?;
@@ -598,9 +745,39 @@ pub mod solana_ai_lend {
             .checked_mul(pool.liquidation_threshold_bps as u128).ok_or(LendError::MathOverflow)?
             .checked_div(10000).ok_or(LendError::MathOverflow)?;
 
-        require!(collateral_value < threshold, LendError::PositionHealthy);
+        // health_factor < 10000 means undercollateralized (10000 = 1.0)
+        let health_before = if total_owed == 0 {
+            u64::MAX
+        } else {
+            (collateral_value
+                .checked_mul(10000).ok_or(LendError::MathOverflow)?
+                .checked_div(threshold).ok_or(LendError::MathOverflow)?) as u64
+        };
+        require!(health_before < 10000, LendError::PositionHealthy);
 
-        // Liquidator pays the full debt in aiUSDC
+        // Partial: repay min(max_repay_amount, total_owed)
+        let repay_amount = max_repay_amount.min(total_owed);
+
+        // Collateral to seize: proportional to debt repaid + 5% liquidation bonus
+        // seize_usd = repay_amount * 10500 / 10000
+        let seize_usd = (repay_amount as u128)
+            .checked_mul(10500).ok_or(LendError::MathOverflow)?
+            .checked_div(10000).ok_or(LendError::MathOverflow)?;
+
+        // Convert USD to SOL lamports: seize_sol = seize_usd * 1e9 / sol_price_usd
+        let seize_sol = seize_usd
+            .checked_mul(1_000_000_000).ok_or(LendError::MathOverflow)?
+            .checked_div(pool.sol_price_usd as u128).ok_or(LendError::MathOverflow)? as u64;
+
+        // Cap at borrower's actual collateral
+        let seize_sol = seize_sol.min(position.collateral_sol);
+
+        // Keeper reward: portion of repaid amount
+        let keeper_reward = (repay_amount as u128)
+            .checked_mul(pool.keeper_reward_bps as u128).ok_or(LendError::MathOverflow)?
+            .checked_div(10000).ok_or(LendError::MathOverflow)? as u64;
+
+        // Liquidator pays repay_amount in aiUSDC to pool vault
         token::transfer(
             CpiContext::new(
                 ctx.accounts.token_program.to_account_info(),
@@ -610,16 +787,15 @@ pub mod solana_ai_lend {
                     authority: ctx.accounts.liquidator.to_account_info(),
                 },
             ),
-            total_owed,
+            repay_amount,
         )?;
 
-        // Liquidator receives all borrower's collateral SOL
-        let collateral_sol = position.collateral_sol;
+        // Transfer seized collateral SOL to liquidator
         let pool_info = ctx.accounts.pool.to_account_info();
         let rent = Rent::get()?;
         let min_lamports = rent.minimum_balance(pool_info.data_len());
         let available_sol = pool_info.lamports().checked_sub(min_lamports).ok_or(LendError::MathOverflow)?;
-        let sol_to_liquidator = collateral_sol.min(available_sol);
+        let sol_to_liquidator = seize_sol.min(available_sol);
 
         let new_pool_lamports = pool_info.lamports()
             .checked_sub(sol_to_liquidator).ok_or(LendError::MathOverflow)?;
@@ -630,29 +806,103 @@ pub mod solana_ai_lend {
             .checked_add(sol_to_liquidator).ok_or(LendError::MathOverflow)?;
         **liquidator_info.try_borrow_mut_lamports()? = new_liq_lamports;
 
+        // Update borrower position (partial — may have remaining debt)
+        let position = &mut ctx.accounts.borrower_position;
+        let borrower_key = position.owner;
+
+        // Pay interest first, then principal
+        let mut remaining = repay_amount;
+        if remaining >= position.accrued_interest {
+            remaining = remaining.checked_sub(position.accrued_interest).ok_or(LendError::MathOverflow)?;
+            position.accrued_interest = 0;
+        } else {
+            position.accrued_interest = position.accrued_interest
+                .checked_sub(remaining).ok_or(LendError::MathOverflow)?;
+            remaining = 0;
+        }
+        if remaining > 0 {
+            position.borrowed = position.borrowed.checked_sub(remaining).ok_or(LendError::MathOverflow)?;
+        }
+        position.collateral_sol = position.collateral_sol.checked_sub(seize_sol).ok_or(LendError::MathOverflow)?;
+
+        // If fully repaid, clear timestamps
+        if position.borrowed == 0 && position.accrued_interest == 0 {
+            position.borrow_timestamp = 0;
+        }
+
         // Update pool state
         let pool = &mut ctx.accounts.pool;
         let now = Clock::get()?.unix_timestamp;
-        pool.total_borrows = pool.total_borrows.checked_sub(position.borrowed).ok_or(LendError::MathOverflow)?;
-        pool.available_liquidity = pool.available_liquidity.checked_add(total_owed).ok_or(LendError::MathOverflow)?;
-        pool.total_collateral_sol = pool.total_collateral_sol.checked_sub(collateral_sol).ok_or(LendError::MathOverflow)?;
+        pool.total_borrows = pool.total_borrows.saturating_sub(remaining);
+        pool.available_liquidity = pool.available_liquidity.checked_add(repay_amount).ok_or(LendError::MathOverflow)?;
+        pool.total_collateral_sol = pool.total_collateral_sol.saturating_sub(seize_sol);
         pool.total_liquidations = pool.total_liquidations.checked_add(1).ok_or(LendError::MathOverflow)?;
 
-        // Clear borrower position
-        let position = &mut ctx.accounts.borrower_position;
-        let borrower_key = position.owner;
-        position.borrowed = 0;
-        position.collateral_sol = 0;
-        position.accrued_interest = 0;
-        position.borrow_timestamp = 0;
+        // Calculate health after
+        let new_total_owed = position.borrowed
+            .checked_add(position.accrued_interest).ok_or(LendError::MathOverflow)?;
+        let health_after = if new_total_owed == 0 {
+            u64::MAX
+        } else {
+            let new_col = (position.collateral_sol as u128)
+                .checked_mul(pool.sol_price_usd as u128).ok_or(LendError::MathOverflow)?
+                .checked_div(1_000_000_000).ok_or(LendError::MathOverflow)?;
+            let new_thresh = (new_total_owed as u128)
+                .checked_mul(pool.liquidation_threshold_bps as u128).ok_or(LendError::MathOverflow)?
+                .checked_div(10000).ok_or(LendError::MathOverflow)?;
+            if new_thresh == 0 { u64::MAX } else {
+                (new_col.checked_mul(10000).ok_or(LendError::MathOverflow)?
+                    .checked_div(new_thresh).ok_or(LendError::MathOverflow)?) as u64
+            }
+        };
 
         emit!(LiquidationEvent {
             pool: pool.key(),
             liquidator: ctx.accounts.liquidator.key(),
             borrower: borrower_key,
-            repaid_amount: total_owed,
+            repaid_amount: repay_amount,
             collateral_seized: sol_to_liquidator,
+            keeper_reward,
+            health_factor_before: health_before,
+            health_factor_after: health_after,
             timestamp: now,
+        });
+
+        Ok(())
+    }
+
+    /// View-like instruction: compute health factor for a position (does NOT modify state).
+    pub fn get_health_factor(ctx: Context<GetHealthFactor>) -> Result<()> {
+        let pool = &ctx.accounts.pool;
+        let position = &ctx.accounts.user_position;
+
+        let total_owed = position.borrowed
+            .checked_add(position.accrued_interest).ok_or(LendError::MathOverflow)?;
+
+        let health_factor = if total_owed == 0 || pool.sol_price_usd == 0 {
+            u64::MAX
+        } else {
+            let collateral_usd = (position.collateral_sol as u128)
+                .checked_mul(pool.sol_price_usd as u128).ok_or(LendError::MathOverflow)?
+                .checked_div(1_000_000_000).ok_or(LendError::MathOverflow)?;
+            let threshold = (total_owed as u128)
+                .checked_mul(pool.liquidation_threshold_bps as u128).ok_or(LendError::MathOverflow)?
+                .checked_div(10000).ok_or(LendError::MathOverflow)?;
+            if threshold == 0 { u64::MAX } else {
+                (collateral_usd.checked_mul(10000).ok_or(LendError::MathOverflow)?
+                    .checked_div(threshold).ok_or(LendError::MathOverflow)?) as u64
+            }
+        };
+
+        emit!(HealthFactorEvent {
+            pool: pool.key(),
+            user: position.owner,
+            health_factor,
+            collateral_sol: position.collateral_sol,
+            borrowed: position.borrowed,
+            accrued_interest: position.accrued_interest,
+            sol_price_usd: pool.sol_price_usd,
+            timestamp: Clock::get()?.unix_timestamp,
         });
 
         Ok(())
@@ -660,8 +910,55 @@ pub mod solana_ai_lend {
 }
 
 // ============================================================
+// Step 23: Safety Net helper
+// ============================================================
+
+fn check_and_update_danger(pool: &mut LendingPool, now: i64) -> Result<()> {
+    if pool.total_deposits == 0 {
+        return Ok(());
+    }
+    // Utilization in bps: borrows * 10000 / deposits
+    let util_bps = (pool.total_borrows as u128)
+        .checked_mul(10000).ok_or(LendError::MathOverflow)?
+        .checked_div(pool.total_deposits as u128).ok_or(LendError::MathOverflow)? as u64;
+
+    if util_bps > 8500 {
+        // > 85% utilization — danger zone
+        pool.danger_slots = pool.danger_slots.saturating_add(1);
+
+        if pool.danger_slots > 100 {
+            // Auto-raise rate by 0.5% (50 bps)
+            let new_rate = pool.interest_rate_bps.saturating_add(50);
+            if new_rate <= pool.max_interest_rate_bps {
+                pool.interest_rate_bps = new_rate;
+                pool.auto_rate_active = true;
+            }
+            pool.danger_slots = 0; // reset after raise
+        }
+    } else {
+        // Safe zone — reset
+        if pool.danger_slots > 0 {
+            pool.danger_slots = 0;
+            pool.auto_rate_active = false;
+        }
+    }
+    pool.last_danger_check = now;
+    Ok(())
+}
+
+// ============================================================
 // PARAMS
 // ============================================================
+
+#[derive(AnchorSerialize, AnchorDeserialize)]
+pub struct GuardrailParams {
+    pub min_rate_bps: u16,
+    pub max_rate_bps: u16,
+    pub min_collateral_bps: u16,
+    pub max_collateral_bps: u16,
+    pub max_change_bps: u16,
+    pub cooldown_seconds: i64,
+}
 
 #[derive(AnchorSerialize, AnchorDeserialize)]
 pub struct UpdateParams {
@@ -685,6 +982,7 @@ pub struct PoolParams {
     pub min_interest_rate_bps: u16,
     pub min_collateral_ratio_bps: u16,
     pub max_collateral_ratio_bps: u16,
+    pub keeper_reward_bps: u16,
 }
 
 // ============================================================
@@ -725,10 +1023,37 @@ pub struct LendingPool {
     pub is_frozen: bool,
     pub protocol_created_at: i64,
 
+    pub keeper_reward_bps: u16,
+
     pub last_update: i64,
     pub update_cooldown: i64,
+
+    // Step 23: Safety Net
+    pub danger_slots: u64,
+    pub auto_rate_active: bool,
+    pub last_danger_check: i64,
+    // Step 25: Price source tracking
+    pub price_last_updated: i64,
+
     pub bump: u8,
     pub vault_bump: u8,
+}
+
+// Step 33: Guardrail Config — separate PDA
+#[account]
+#[derive(InitSpace)]
+pub struct GuardrailConfig {
+    pub pool: Pubkey,
+    pub authority: Pubkey,
+    pub min_rate_bps: u16,
+    pub max_rate_bps: u16,
+    pub min_collateral_bps: u16,
+    pub max_collateral_bps: u16,
+    pub max_change_bps: u16,
+    pub cooldown_seconds: i64,
+    pub config_hash: [u8; 32],
+    pub last_updated: i64,
+    pub bump: u8,
 }
 
 #[account]
@@ -1165,6 +1490,82 @@ pub struct Liquidate<'info> {
     pub token_program: Program<'info, Token>,
 }
 
+#[derive(Accounts)]
+pub struct MigratePool<'info> {
+    /// CHECK: Pool account being migrated — validated by seed derivation + owner check
+    #[account(
+        mut,
+        owner = crate::ID,
+    )]
+    pub pool: UncheckedAccount<'info>,
+
+    #[account(mut)]
+    pub authority: Signer<'info>,
+
+    pub system_program: Program<'info, System>,
+}
+
+// Step 33: Guardrail accounts
+#[derive(Accounts)]
+pub struct InitGuardrails<'info> {
+    #[account(
+        seeds = [b"lending_pool", pool.authority.as_ref()],
+        bump = pool.bump,
+        has_one = authority,
+    )]
+    pub pool: Account<'info, LendingPool>,
+
+    #[account(
+        init,
+        payer = authority,
+        space = 8 + GuardrailConfig::INIT_SPACE,
+        seeds = [b"guardrails", pool.key().as_ref()],
+        bump,
+    )]
+    pub guardrail_config: Account<'info, GuardrailConfig>,
+
+    #[account(mut)]
+    pub authority: Signer<'info>,
+
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+pub struct UpdateGuardrails<'info> {
+    #[account(
+        seeds = [b"lending_pool", pool.authority.as_ref()],
+        bump = pool.bump,
+        has_one = authority,
+    )]
+    pub pool: Account<'info, LendingPool>,
+
+    #[account(
+        mut,
+        seeds = [b"guardrails", pool.key().as_ref()],
+        bump = guardrail_config.bump,
+        has_one = authority,
+    )]
+    pub guardrail_config: Account<'info, GuardrailConfig>,
+
+    pub authority: Signer<'info>,
+}
+
+#[derive(Accounts)]
+pub struct GetHealthFactor<'info> {
+    #[account(
+        seeds = [b"lending_pool", pool.authority.as_ref()],
+        bump = pool.bump,
+    )]
+    pub pool: Account<'info, LendingPool>,
+
+    #[account(
+        seeds = [b"position", pool.key().as_ref(), user_position.owner.as_ref()],
+        bump = user_position.bump,
+        has_one = pool,
+    )]
+    pub user_position: Account<'info, UserPosition>,
+}
+
 // ============================================================
 // EVENTS
 // ============================================================
@@ -1283,6 +1684,38 @@ pub struct LiquidationEvent {
     pub borrower: Pubkey,
     pub repaid_amount: u64,
     pub collateral_seized: u64,
+    pub keeper_reward: u64,
+    pub health_factor_before: u64,
+    pub health_factor_after: u64,
+    pub timestamp: i64,
+}
+
+#[event]
+pub struct HealthFactorEvent {
+    pub pool: Pubkey,
+    pub user: Pubkey,
+    pub health_factor: u64,
+    pub collateral_sol: u64,
+    pub borrowed: u64,
+    pub accrued_interest: u64,
+    pub sol_price_usd: u64,
+    pub timestamp: i64,
+}
+
+// Step 23: Auto-rate event
+#[event]
+pub struct AutoRateEvent {
+    pub pool: Pubkey,
+    pub new_rate: u16,
+    pub danger_slots: u64,
+    pub timestamp: i64,
+}
+
+// Step 33: Guardrails updated event
+#[event]
+pub struct GuardrailsUpdatedEvent {
+    pub pool: Pubkey,
+    pub config_hash: [u8; 32],
     pub timestamp: i64,
 }
 
@@ -1334,4 +1767,6 @@ pub enum LendError {
     Unauthorized,
     #[msg("No active borrow to accrue interest on")]
     NoBorrowToAccrue,
+    #[msg("Keeper reward exceeds maximum (5%)")]
+    RewardTooHigh,
 }

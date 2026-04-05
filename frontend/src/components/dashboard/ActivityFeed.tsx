@@ -10,7 +10,7 @@ const actionLabels: Record<string, TranslationKey> = {
   repay: "actRepay",
   deposit_collateral: "actCollateral",
   withdraw_collateral: "actCollateral",
-  liquidate: "actLiquidate",
+  liquidate: "partialLiquidation",
 };
 
 const actionColors: Record<string, string> = {

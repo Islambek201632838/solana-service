@@ -67,6 +67,19 @@ async def get_pool_stats():
     borrow_rate = base_rate                                # borrowers pay full rate
     lend_rate = base_rate * utilization * (1 - protocol_fee)  # lenders earn less
 
+    # Pool-level health factor: aggregate collateral_usd vs total borrows * threshold
+    total_borrows = state.get("total_borrows", 0)
+    threshold_bps = state.get("liquidation_threshold_bps", 12000)
+    collateral_sol = state.get("total_collateral_sol", 0)
+    collateral_usd = (collateral_sol * state.get("sol_price_usd", 0)) / 1e9 / 1e6 if state.get("sol_price_usd", 0) > 0 else 0
+    if total_borrows > 0 and threshold_bps > 0:
+        threshold_usd = (total_borrows / 1e6) * (threshold_bps / 10000)
+        pool_health = collateral_usd / threshold_usd if threshold_usd > 0 else 0
+    else:
+        pool_health = 99.99  # no borrows = perfectly healthy
+
+    keeper_reward_bps = state.get("keeper_reward_bps", 0)
+
     return PoolStatsResponse(
         total_deposits_usd=state.get("total_deposits", 0) / 1_000_000,
         total_borrows_usd=state.get("total_borrows", 0) / 1_000_000,
@@ -82,4 +95,6 @@ async def get_pool_stats():
         total_ai_updates=state.get("total_ai_updates", 0),
         total_liquidations=state.get("total_liquidations", 0),
         mood=state.get("mood_str", "Unknown"),
+        pool_health_factor=round(pool_health, 4),
+        keeper_reward_pct=keeper_reward_bps / 100,
     )

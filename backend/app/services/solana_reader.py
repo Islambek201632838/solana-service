@@ -126,6 +126,7 @@ class SolanaReader:
                 "current_mood": read_u8(),
                 "is_frozen": read_bool(),
                 "protocol_created_at": read_i64(),
+                "keeper_reward_bps": read_u16(),
                 "last_update": read_i64(),
                 "update_cooldown": read_i64(),
                 "bump": read_u8(),

@@ -56,17 +56,12 @@ export default function Activity() {
   const lendRate = stats?.lend_rate_pct ?? 0;
   const borrowRate = stats?.borrow_rate_pct ?? 0;
   const utilization = stats?.utilization_pct ?? 0;
-  const protocolFee = stats?.protocol_fee_pct ?? 10;
-
   const dailyEarning = deposits * lendRate / 100 / 365;
   const monthlyEarning = deposits * lendRate / 100 / 12;
   const yearlyEarning = deposits * lendRate / 100;
 
   const dailyCost = borrows * borrowRate / 100 / 365;
   const monthlyCost = borrows * borrowRate / 100 / 12;
-
-  // Protocol revenue
-  const protocolDaily = (borrows * borrowRate / 100 / 365) - (deposits * lendRate / 100 / 365);
 
   // Count by type
   const borrowCount = items.filter(i => i.action === "borrow").length;
