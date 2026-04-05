@@ -184,6 +184,7 @@ const translations = {
     loading: "Loading",
     protocol: "Protocol",
     mood: "Mood",
+    ago: "ago",
   },
   ru: {
     dashboard: "Дашборд",
@@ -351,6 +352,7 @@ const translations = {
     loading: "Загрузка",
     protocol: "Протокол",
     mood: "Настроение",
+    ago: "назад",
   },
 } as const;
 

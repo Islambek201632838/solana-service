@@ -13,6 +13,7 @@ class SolanaReader:
     def __init__(self, settings: Settings):
         self.rpc_url = settings.solana_rpc_url
         self.pool_address = settings.pool_address or settings.pool_authority
+        self.program_id = settings.program_id
         self._cache: dict | None = None
         self._cache_time: float = 0
         self._cache_ttl: float = 30.0

@@ -16,8 +16,23 @@ const RISK_FILTERS: { value: string; labelKey: TranslationKey }[] = [
 export default function AiDecisions() {
   const [page, setPage] = useState(1);
   const [riskFilter, setRiskFilter] = useState("all");
-  const { isMobile, isDesktop } = useBreakpoint();
+  const { isDesktop } = useBreakpoint();
   const { t } = useLang();
+
+  // Fetch counts for each risk level
+  const { data: allData } = useAiDecisions(1, 1);
+  const { data: lowData } = useAiDecisions(1, 1, "low");
+  const { data: medData } = useAiDecisions(1, 1, "medium");
+  const { data: highData } = useAiDecisions(1, 1, "high");
+  const { data: critData } = useAiDecisions(1, 1, "critical");
+
+  const counts: Record<string, number> = {
+    all: allData?.total ?? 0,
+    low: lowData?.total ?? 0,
+    medium: medData?.total ?? 0,
+    high: highData?.total ?? 0,
+    critical: critData?.total ?? 0,
+  };
 
   const { data, loading } = useAiDecisions(
     page, 10, riskFilter === "all" ? undefined : riskFilter
@@ -30,21 +45,24 @@ export default function AiDecisions() {
         <span className="text-sm text-gray-500">{data?.total ?? 0} {t("total")}</span>
       </div>
 
-      {isDesktop ? (
-        <div className="flex gap-2">
-          {RISK_FILTERS.map((f) => (
-            <button
-              key={f.value}
-              onClick={() => { setRiskFilter(f.value); setPage(1); }}
-              className={`px-4 py-2 rounded-lg text-sm ${
-                riskFilter === f.value ? "bg-purple-600 text-white" : "bg-gray-800 text-gray-400 hover:bg-gray-700"
-              }`}
-            >
-              {t(f.labelKey)}
-            </button>
-          ))}
-        </div>
-      ) : (
+      <div className="flex gap-2 flex-wrap">
+        {RISK_FILTERS.map((f) => (
+          <button
+            key={f.value}
+            onClick={() => { setRiskFilter(f.value); setPage(1); }}
+            className={`px-3 py-1.5 rounded-lg text-sm transition ${
+              riskFilter === f.value
+                ? "bg-purple-600/20 text-purple-400 border border-purple-500/30"
+                : "bg-gray-800 text-gray-400 hover:text-white border border-gray-700"
+            }`}
+          >
+            {t(f.labelKey)}
+            <span className="ml-1.5 text-xs text-gray-500">{counts[f.value] ?? 0}</span>
+          </button>
+        ))}
+      </div>
+
+      {false && isDesktop && (
         <select
           value={riskFilter}
           onChange={(e) => { setRiskFilter(e.target.value); setPage(1); }}
@@ -74,29 +92,40 @@ export default function AiDecisions() {
         </div>
       )}
 
-      {(data?.total ?? 0) > 10 && (
-        isMobile ? (
-          <button
-            onClick={() => setPage((p) => p + 1)}
-            disabled={page * 10 >= (data?.total ?? 0)}
-            className="w-full bg-gray-800 hover:bg-gray-700 disabled:opacity-30 rounded-lg py-3 text-sm min-h-[48px]"
-          >
-            {t("loadMore")}
-          </button>
-        ) : (
-          <div className="flex justify-center gap-2">
-            {Array.from({ length: Math.ceil((data?.total ?? 0) / 10) }, (_, i) => (
-              <button
-                key={i}
-                onClick={() => setPage(i + 1)}
-                className={`px-3 py-1 rounded ${page === i + 1 ? "bg-purple-600" : "bg-gray-800 hover:bg-gray-700"}`}
-              >
-                {i + 1}
-              </button>
-            ))}
+      {(() => {
+        const totalPages = Math.max(1, Math.ceil((data?.total ?? 0) / 10));
+        if (totalPages <= 1) return null;
+        return (
+          <div className="flex items-center justify-center gap-2">
+            <button
+              onClick={() => setPage(p => Math.max(1, p - 1))}
+              disabled={page === 1}
+              className="px-3 py-1.5 bg-gray-800 rounded-lg text-sm text-gray-400 disabled:opacity-30 hover:bg-gray-700"
+            >&laquo;</button>
+            {Array.from({ length: Math.min(totalPages, 7) }, (_, i) => {
+              let p: number;
+              if (totalPages <= 7) p = i + 1;
+              else if (page <= 4) p = i + 1;
+              else if (page >= totalPages - 3) p = totalPages - 6 + i;
+              else p = page - 3 + i;
+              return (
+                <button
+                  key={p}
+                  onClick={() => setPage(p)}
+                  className={`w-8 h-8 rounded-lg text-sm transition ${
+                    page === p ? "bg-purple-600 text-white" : "bg-gray-800 text-gray-400 hover:bg-gray-700"
+                  }`}
+                >{p}</button>
+              );
+            })}
+            <button
+              onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+              disabled={page === totalPages}
+              className="px-3 py-1.5 bg-gray-800 rounded-lg text-sm text-gray-400 disabled:opacity-30 hover:bg-gray-700"
+            >&raquo;</button>
           </div>
-        )
-      )}
+        );
+      })()}
     </div>
   );
 }
