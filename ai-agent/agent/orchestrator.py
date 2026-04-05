@@ -26,6 +26,7 @@ from models.risk_scorer import RiskScorer
 from models.utilization_predictor import UtilizationPredictor
 from models.crash_detector import CrashDetector
 from agent.preemptive_engine import PreemptiveEngine
+from agent.model_reputation import ModelReputation
 
 
 class Orchestrator:
@@ -50,10 +51,12 @@ class Orchestrator:
         self.util_predictor = UtilizationPredictor()
         self.crash_detector = CrashDetector()
         self.preemptive = PreemptiveEngine()
+        self.reputation = ModelReputation()
 
         # Utilization trend tracking (last N readings)
         self._util_history: list[float] = []
         self._max_util_history = 10
+        self._last_sol_price: float = 0
 
     async def start(self):
         """Main loop — runs AI cycle every interval."""
@@ -113,6 +116,16 @@ class Orchestrator:
 
         print(f"[CYCLE] SOL=${sol_price:.2f}, util={pool.get('utilization', 0):.2%}")
 
+        # Record outcomes from PREVIOUS cycle predictions
+        if self._last_sol_price > 0:
+            prev = self._last_sol_price
+            direction_actual = "up" if sol_price > prev * 1.001 else "down" if sol_price < prev * 0.999 else "sideways"
+            last_trend = self.reputation._last_predictions.get("trend_predictor")
+            if last_trend is not None:
+                self.reputation.record_binary("trend_predictor", last_trend == direction_actual)
+            self.reputation.record_outcome("volatility_model", abs(sol_price - prev) / prev * 100)
+        self._last_sol_price = sol_price
+
         # 2. Quant analysis (CPU-bound → thread pool)
         loop = asyncio.get_event_loop()
         technical = await loop.run_in_executor(self.executor, self._run_quant, prices)
@@ -138,6 +151,13 @@ class Orchestrator:
             print(f"[CYCLE] Trend accuracy: {trend['accuracy_estimate']:.1f}%, "
                   f"proba: up={trend.get('probabilities', {}).get('up', 0):.0%} "
                   f"down={trend.get('probabilities', {}).get('down', 0):.0%}")
+
+        # 3a2. Store predictions for reputation tracking
+        self.reputation.store_prediction("trend_predictor", trend.get("direction", "sideways"))
+        self.reputation.store_prediction("volatility_model", ml_signals["volatility"]["volatility"])
+        self.reputation.store_prediction("risk_scorer", ml_signals["risk_score"])
+        if self.reputation.get_stats()["trend_predictor"]["samples"] >= 5:
+            print(f"[CYCLE] Reputation: {self.reputation.summary()}")
 
         # 3b. Crash detection
         crash = self.crash_detector.predict(prices, volumes)
@@ -197,6 +217,7 @@ class Orchestrator:
         report["preemptive_actions"] = preemptive_actions
         report["util_trend"] = util_trend
         report["util_history"] = [round(u, 4) for u in self._util_history[-5:]]
+        report["model_reputation"] = self.reputation.get_stats()
 
         # 5b. Sentiment analysis (async — runs Gemini separately)
         try:
@@ -220,6 +241,23 @@ class Orchestrator:
         # 6. Gemini decision (async)
         print("[CYCLE] Asking Gemini...")
         decision = await self.ai_engine.interpret(report)
+
+        # 6b. Dynamic LTV override based on volatility (Step 38)
+        vol_regime = ml_signals.get("volatility", {}).get("regime", "medium")
+        current_col = pool.get("collateral_ratio_bps", 12000)
+        min_col = pool.get("min_collateral_ratio_bps", 12000)
+        max_col = pool.get("max_collateral_ratio_bps", 20000)
+        dynamic_col = decision["collateral_ratio_bps"]
+        if vol_regime == "extreme":
+            dynamic_col = min(current_col + 2000, max_col)  # +20%
+        elif vol_regime == "high":
+            dynamic_col = min(current_col + 1000, max_col)  # +10%
+        elif vol_regime == "low" and crash_prob < 20:
+            dynamic_col = max(current_col - 500, min_col)   # -5% (attract borrowers)
+        if dynamic_col != decision["collateral_ratio_bps"]:
+            print(f"[CYCLE] Dynamic LTV: {decision['collateral_ratio_bps']}→{dynamic_col} (vol={vol_regime})")
+            decision["collateral_ratio_bps"] = dynamic_col
+
         print(f"[CYCLE] Gemini: rate {pool.get('interest_rate_bps', '?')}→{decision['interest_rate_bps']}, "
               f"confidence={decision['confidence']}, risk={decision['risk_level']}")
         print(f"[CYCLE] Reasoning: {decision['reasoning_short']}")
@@ -256,11 +294,17 @@ class Orchestrator:
         else:
             print("[CYCLE] TX failed (cooldown or other)")
 
-        # 10. AI Emergency Freeze if risk critical
+        # 10. AI Emergency Freeze if risk critical OR crash imminent
         risk_score = ml_signals.get("risk_score", 0)
         is_anomaly = ml_signals.get("anomaly", {}).get("is_anomaly", False)
-        if risk_score > 90 or (is_anomaly and risk_score > 70):
-            print(f"[CYCLE] EMERGENCY: risk={risk_score}, anomaly={is_anomaly}")
+        should_freeze = (
+            risk_score > 90
+            or (is_anomaly and risk_score > 70)
+            or crash_prob >= 80  # Step 36: crash detector → freeze
+        )
+        if should_freeze and not pool.get("is_frozen", False):
+            reason = f"risk={risk_score}, anomaly={is_anomaly}, crash={crash_prob}%"
+            print(f"[CYCLE] EMERGENCY: {reason}")
             freeze_tx = await self.tx_builder.send_ai_emergency_freeze(pool_authority_pubkey)
             if freeze_tx:
                 print(f"[CYCLE] PROTOCOL FROZEN BY AI: {freeze_tx}")

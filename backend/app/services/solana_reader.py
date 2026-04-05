@@ -161,10 +161,11 @@ class SolanaReader:
     async def get_all_positions(self) -> list[dict]:
         """Fetch all UserPosition accounts via getProgramAccounts."""
         try:
-            # UserPosition discriminator
+            # UserPosition discriminator (base58 for memcmp)
             import hashlib
+            import base58
             disc = hashlib.sha256(b"account:UserPosition").digest()[:8]
-            filters = [{"memcmp": {"offset": 0, "bytes": __import__('base64').b64encode(disc).decode()}}]
+            filters = [{"memcmp": {"offset": 0, "bytes": base58.b58encode(disc).decode()}}]
 
             body = {
                 "jsonrpc": "2.0", "id": 1,
@@ -174,7 +175,8 @@ class SolanaReader:
                     {"encoding": "base64", "filters": filters}
                 ]
             }
-            async with self.session.post(self.rpc_url, json=body) as resp:
+            session = await self._get_session()
+            async with session.post(self.rpc_url, json=body) as resp:
                 data = await resp.json()
 
             positions = []

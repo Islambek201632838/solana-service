@@ -11,6 +11,10 @@ anchorpy>=0.20
 # Database
 aiosqlite>=0.20
 
+# Math
+numpy>=1.26
+base58>=2.1
+
 # Config
 pydantic-settings>=2.0
 python-dotenv>=1.0

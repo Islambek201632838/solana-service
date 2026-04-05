@@ -1,6 +1,7 @@
-"""Risk Router — liquidation queue + risk dashboard endpoints."""
+"""Risk Router — liquidation queue + risk dashboard + prediction endpoints."""
 
 import time
+import numpy as np
 from fastapi import APIRouter, HTTPException
 
 from app.services.solana_reader import SolanaReader
@@ -119,4 +120,80 @@ async def get_liquidation_queue():
         "total_watching": len(at_risk),
         "total_debt_at_risk_usd": round(total_debt_at_risk, 2),
         "insurance_coverage_pct": round(insurance / total_debt_at_risk * 100, 1) if total_debt_at_risk > 0 else 100,
+    }
+
+
+@router.get("/predict/{wallet}")
+async def predict_liquidation(wallet: str):
+    """Monte Carlo prediction of liquidation probability for a wallet."""
+    state = await reader.get_pool_state()
+    if "error" in state:
+        raise HTTPException(status_code=503, detail=state["error"])
+
+    positions = await reader.get_all_positions()
+    pos = None
+    for p in positions:
+        if p.get("owner", "") == wallet:
+            pos = p
+            break
+
+    if pos is None:
+        raise HTTPException(status_code=404, detail="Position not found")
+
+    borrowed = pos.get("borrowed", 0)
+    interest = pos.get("accrued_interest", 0)
+    total_owed = (borrowed + interest) / 1e6
+    collateral_sol = pos.get("collateral_sol", 0) / 1e9
+    sol_price = state.get("sol_price_usd", 0) / 1_000_000 if state.get("sol_price_usd", 0) > 0 else 0
+    threshold_bps = state.get("liquidation_threshold_bps", 12000)
+
+    if total_owed <= 0 or sol_price <= 0:
+        return {
+            "wallet": wallet,
+            "health_factor": 99.99,
+            "probabilities": {"1h": 0, "4h": 0, "24h": 0},
+            "risk_level": "safe",
+            "recommendation": None,
+        }
+
+    collateral_usd = collateral_sol * sol_price
+    threshold_usd = total_owed * (threshold_bps / 10000)
+    health = collateral_usd / threshold_usd if threshold_usd > 0 else 99
+
+    # Monte Carlo simulation
+    vol = 0.03  # ~3% hourly vol assumption
+    sims = 1000
+    probs = {}
+    for key, hours in [("1h", 1), ("4h", 4), ("24h", 24)]:
+        count = 0
+        for _ in range(sims):
+            change = np.random.normal(0, vol * np.sqrt(hours))
+            if health * (1 + change) < 1.0:
+                count += 1
+        probs[key] = round(count / sims * 100, 1)
+
+    # Risk level and recommendation
+    max_prob = max(probs.values())
+    if max_prob >= 50:
+        risk_level = "critical"
+        rec = f"Add {((1.2 / health - 1) * collateral_sol):.2f} SOL collateral or repay ${total_owed * 0.3:.0f}"
+    elif max_prob >= 20:
+        risk_level = "high"
+        rec = f"Consider adding collateral. Health factor: {health:.2f}"
+    elif max_prob >= 5:
+        risk_level = "moderate"
+        rec = "Monitor position. Health factor adequate but not safe."
+    else:
+        risk_level = "safe"
+        rec = None
+
+    return {
+        "wallet": wallet,
+        "health_factor": round(health, 4),
+        "collateral_sol": round(collateral_sol, 4),
+        "collateral_usd": round(collateral_usd, 2),
+        "debt_usd": round(total_owed, 2),
+        "probabilities": probs,
+        "risk_level": risk_level,
+        "recommendation": rec,
     }

@@ -7,7 +7,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import Settings
-from app.routers import pool, decisions, analytics, activity, system, leaderboard, simulate, risk
+from app.routers import pool, decisions, analytics, activity, system, leaderboard, simulate, risk, credit
 from app.services.decision_service import DecisionService
 from app.services.solana_reader import SolanaReader
 from app.ws.manager import manager
@@ -53,6 +53,7 @@ app.include_router(system.router)
 app.include_router(leaderboard.router)
 app.include_router(simulate.router)
 app.include_router(risk.router)
+app.include_router(credit.router)
 
 
 # WebSocket endpoint
