@@ -1,95 +1,94 @@
-# Demo Script — SolanaAI Lend (3 min video)
+# Демо-скрипт — SolanaAI Lend (3 мин видео)
 
-**Live site**: http://89.207.255.254/
-
----
-
-## 0:00 — Opening (15s)
-
-"SolanaAI Lend — an autonomous AI-powered lending protocol on Solana.
-AI manages interest rates, collateral ratios, and borrow limits in real time,
-while the smart contract enforces strict safety guardrails.
-Let me show you how it works."
+**Сайт**: http://89.207.255.254/
 
 ---
 
-## 0:15 — Dashboard Overview (30s)
+## 0:00 — Вступление (15 сек)
 
-- Show: interest rate, total deposits, total borrows, SOL price, utilization %
-- "Here's our live dashboard. The protocol is running on Solana devnet right now."
-- Point to Protocol Mood badge: "This mood indicator — Calm, Cautious, Stressed, or Crisis — reflects the AI's real-time risk assessment."
-- Point to Insurance Fund: "10% of all interest flows into this insurance fund to cover bad debt — just like production protocols."
-- Show Health Factor bar, Liquidation Queue widget
-- "Users can see their position health and liquidation risk at a glance."
+"SolanaAI Lend — автономный AI-powered лендинг-протокол на Solana.
+AI управляет ставками, залогом и лимитами в реальном времени,
+а смарт-контракт обеспечивает жёсткие ограничения безопасности.
+Давайте покажу как это работает."
 
 ---
 
-## 0:45 — AI Decisions Page (35s)
+## 0:15 — Обзор дашборда (30 сек)
 
-- Click "AI Decisions" in nav
-- Show a decision card with full details
-- "Every 2 minutes, the AI agent runs a complete analysis pipeline:
-  5 technical indicators — RSI, MACD, Bollinger Bands, ATR, EMA —
-  plus 6 ML models for trend prediction, anomaly detection, volatility regime,
-  crash probability, risk scoring, and utilization forecasting."
-- Point to reasoning text: "Gemini 2.0 Flash generates a human-readable explanation for every decision — in English and Russian."
-- Show Model Performance widget: "The AI tracks each model's accuracy over time and dynamically adjusts their weights. A model that's been wrong loses influence; one that's been right gains it. Self-improving AI."
-- Click "View TX" → Solana Explorer: "Every parameter change is an on-chain transaction — fully verifiable."
+- Показать: ставка, депозиты, займы, цена SOL, утилизация
+- "Вот наш живой дашборд. Протокол работает на Solana devnet прямо сейчас."
+- Показать Protocol Mood badge: "Этот индикатор — Calm, Cautious, Stressed или Crisis — отражает оценку риска AI в реальном времени."
+- Показать Insurance Fund: "10% от всех процентов идут в страховой фонд для покрытия плохого долга — как в production протоколах."
+- Показать Health Factor bar, очередь ликвидаций
+- "Юзеры видят здоровье позиции и риск ликвидации мгновенно."
 
 ---
 
-## 1:20 — Safety Architecture (30s)
+## 0:45 — Страница AI решений (35 сек)
 
-- "What makes this different from 'trust the AI' is our 7-layer safety system:"
-- "Layer 1: Prompt engineering constrains Gemini's output format."
-- "Layer 2: A validator checks 11 rules — rate bounds, collateral bounds, max change per update."
-- "Layer 3: The smart contract enforces the same limits on-chain — impossible to bypass."
-- "Layer 4: AI can emergency-freeze the protocol if crash probability exceeds 80%."
-- "Layer 5: If the AI agent dies, the contract has an auto-rate mechanism to protect liquidity."
-- "Layer 6: Insurance fund covers bad debt from failed liquidations."
-- "Layer 7: Guardrail parameters are stored in a separate PDA — only the authority can modify them."
-- Show log example: "Here — 'CooldownActive' — the contract rejected an update because the cooldown hadn't passed. The AI doesn't get to override safety."
-
----
-
-## 1:50 — Smart Features (40s)
-
-- **Dynamic LTV**: "AI automatically adjusts collateral requirements based on volatility. In calm markets — lower collateral to attract borrowers. In a storm — collateral goes up 10-20% to protect the pool."
-- Show LTV Mode badge (Calm/Normal/Storm/Extreme)
-
-- **Credit Score**: "Every wallet gets an on-chain credit score based on 5 factors: account age, transaction count, repayment history, liquidation record, and position size."
-- Show Credit Score widget: "Platinum users get 15% lower collateral and 10% lower rates. It rewards good behavior."
-
-- **Crash Detection**: "Six signals — price momentum, volume spikes, consecutive red candles, SMA deviation, short-term volatility, and trend acceleration — feed into a crash probability score. Above 80%? The AI freezes the protocol automatically."
-
-- **Liquidation Predictor**: "Monte Carlo simulation with 500 price paths predicts liquidation probability at 1-hour, 4-hour, and 24-hour horizons. Users get warnings before they're in danger."
+- Кликнуть "AI Decisions"
+- Показать карточку решения
+- "Каждые 2 минуты AI агент запускает полный пайплайн анализа:
+  5 технических индикаторов — RSI, MACD, Bollinger Bands, ATR, EMA —
+  плюс 6 ML моделей для предсказания тренда, детекции аномалий,
+  режима волатильности, вероятности крэша, скоринга рисков и прогноза утилизации."
+- Показать текст reasoning: "Gemini 2.0 Flash генерирует человекочитаемое объяснение для каждого решения — на EN и RU."
+- Показать Model Performance: "AI отслеживает точность каждой модели и динамически меняет их веса. Модель которая ошибается — теряет влияние. Самообучающийся AI."
+- Кликнуть "Смотреть TX" -> Solana Explorer: "Каждое изменение параметров — on-chain транзакция. Проверяемо."
 
 ---
 
-## 2:30 — Architecture & Resilience (20s)
+## 1:20 — Архитектура безопасности (30 сек)
 
-- Show architecture diagram or describe:
-- "Five Docker containers: nginx reverse proxy, React frontend, FastAPI backend reading from Solana RPC, the AI agent running the ML pipeline, and an activity simulator generating realistic traffic."
-- "If Gemini goes down, the AI falls back to ML-only decisions. If the entire agent dies, the contract's auto-rate kicks in. The protocol never stops."
+- "Что отличает нас от 'доверяй AI' — это 7 уровней безопасности:"
+- "Уровень 1: Промпт ограничивает формат вывода Gemini."
+- "Уровень 2: Валидатор проверяет 11 правил — границы ставки, залога, макс изменение."
+- "Уровень 3: Смарт-контракт дублирует те же лимиты on-chain — обойти невозможно."
+- "Уровень 4: AI может заморозить протокол если вероятность крэша > 80%."
+- "Уровень 5: Если AI агент умер — контракт сам повышает ставку для защиты ликвидности."
+- "Уровень 6: Страховой фонд покрывает плохой долг."
+- "Уровень 7: Параметры защиты в отдельном PDA — только authority может менять."
+- Показать лог: "Вот — CooldownActive — контракт не дал обновить раньше времени."
 
 ---
 
-## 2:50 — Closing (10s)
+## 1:50 — Умные фичи (40 сек)
 
-- "SolanaAI Lend: AI thinks, the contract controls."
-- "Not 'trust the AI' — but 'verify on-chain'."
-- "Live now at 89.207.255.254. All code is open source."
+- **Dynamic LTV**: "AI автоматически меняет требования к залогу в зависимости от волатильности. В спокойном рынке — залог ниже чтобы привлечь заёмщиков. В шторм — залог растёт на 10-20% для защиты."
+- Показать LTV Mode badge (Calm/Normal/Storm/Extreme)
+
+- **Credit Score**: "Каждый кошелёк получает on-chain кредитный скоринг по 5 факторам: возраст аккаунта, количество операций, история возврата, ликвидации, размер позиции."
+- Показать Credit Score: "Platinum юзеры получают -15% к залогу и -10% к ставке."
+
+- **Crash Detection**: "6 сигналов — моментум цены, всплеск объёма, серии красных свечей, отклонение SMA, волатильность и ускорение падения. Выше 80%? AI замораживает протокол автоматически."
+
+- **Liquidation Predictor**: "Monte Carlo с 500 ценовыми путями предсказывает вероятность ликвидации на 1ч, 4ч, 24ч. Юзеры получают предупреждение заранее."
+
+---
+
+## 2:30 — Архитектура и отказоустойчивость (20 сек)
+
+- "5 Docker контейнеров: nginx, React фронтенд, FastAPI бэкенд с Solana RPC, AI агент с ML пайплайном, и симулятор активности."
+- "Gemini упал — AI переключается на ML-only. Агент упал — контракт сам защищает. Протокол никогда не останавливается."
+
+---
+
+## 2:50 — Итог (10 сек)
+
+- "SolanaAI Lend: AI думает, контракт контролирует."
+- "Не 'поверь AI' — а 'проверь on-chain'."
+- "Работает на 89.207.255.254. Весь код открытый."
 - GitHub: github.com/Islambek201632838/solana-service
 
 ---
 
-## Recommended Screenshots / Screen Recording Shots
+## Скриншоты для записи
 
-1. Dashboard with live data (desktop)
-2. AI Decision card with ML metrics + reasoning
+1. Дашборд с живыми данными (desktop)
+2. AI Decision карточка с ML метриками + reasoning
 3. Solana Explorer — TX proof
-4. Credit Score widget showing tier
-5. Liquidation Warning with Monte Carlo probabilities
-6. LTV Mode badge changing with volatility
+4. Credit Score виджет с тиром
+5. Liquidation Warning с Monte Carlo вероятностями
+6. LTV Mode badge
 7. Mobile responsive view
-8. Architecture diagram
+8. Диаграмма архитектуры
