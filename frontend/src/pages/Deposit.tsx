@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useLang } from "../hooks/useLang";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
+import { WalletMultiButton } from "@solana/wallet-adapter-react-ui";
 import { PublicKey, Transaction, SystemProgram } from "@solana/web3.js";
 import { TOKEN_PROGRAM_ID, getAssociatedTokenAddress } from "@solana/spl-token";
 import DepositForm from "../components/dashboard/DepositForm";
@@ -72,6 +73,13 @@ export default function Deposit() {
   return (
     <div className="space-y-6">
       <h2 className="text-2xl font-bold">{t("depositTitle")}</h2>
+
+      {!publicKey && (
+        <div className="rounded-lg px-4 py-3 bg-purple-900/30 border border-purple-700 flex items-center justify-between">
+          <span className="text-sm text-purple-300">{t("connectWalletFirst")}</span>
+          <WalletMultiButton className="!bg-purple-600 !rounded-lg !h-8 !text-xs" />
+        </div>
+      )}
 
       {txStatus && (
         <div className={`rounded-lg px-4 py-3 text-sm ${txStatus.startsWith("Error") ? "bg-red-900/30 text-red-400" : "bg-green-900/30 text-green-400"}`}>

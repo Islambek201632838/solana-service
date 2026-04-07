@@ -75,6 +75,7 @@ function DashboardPage() {
           balanceUsd={stats?.insurance_balance_usd ?? 0}
           totalBorrowsUsd={stats?.total_borrows_usd ?? 0}
           badDebtCoveredUsd={stats?.total_bad_debt_covered_usd ?? 0}
+          interestRatePct={stats?.interest_rate_pct ?? 0}
         />
       </div>
 

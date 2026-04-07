@@ -101,82 +101,113 @@ async function main() {
   while (true) {
     cycle++;
 
-    // Pick random user (deployer more often since bigger position)
-    const weights = users.map((u, i) => i === 0 ? 3 : 1); // deployer 3x more likely
-    const totalWeight = weights.reduce((a, b) => a + b, 0);
-    let r = Math.random() * totalWeight;
-    let userIdx = 0;
-    for (let i = 0; i < weights.length; i++) {
-      r -= weights[i];
-      if (r <= 0) { userIdx = i; break; }
+    // ── Accrue interest for ALL users with borrows (feeds insurance fund) ──
+    for (const u of users) {
+      try {
+        const pos = await program.account.userPosition.fetch(u.positionPDA);
+        if (pos.borrowed.toNumber() > 0) {
+          await program.methods.accrueInterest()
+            .accounts({ pool: poolPDA, userPosition: u.positionPDA })
+            .rpc();
+        }
+      } catch (_e) { /* skip */ }
     }
-    const user = users[userIdx];
 
     try {
       const poolState = await program.account.lendingPool.fetch(poolPDA);
-      const position = await program.account.userPosition.fetch(user.positionPDA);
-
       const deposits = poolState.totalDeposits.toNumber() / 1e6;
       const borrows = poolState.totalBorrows.toNumber() / 1e6;
       const liquidity = poolState.availableLiquidity.toNumber() / 1e6;
-      const collateral = position.collateralSol.toNumber() / LAMPORTS_PER_SOL;
-      const borrowed = position.borrowed.toNumber() / 1e6;
-      const rate = poolState.interestRateBps / 100;
       const util = deposits > 0 ? (borrows / deposits) * 100 : 0;
       const solPrice = poolState.solPriceUsd.toNumber() / 1e6;
       const colRatio = poolState.collateralRatioBps / 10000;
-      const maxBorrow = Math.max(0, (collateral * solPrice / colRatio) - borrowed);
 
-      const userLabel = `${user.name} (${user.keypair.publicKey.toString().slice(0, 6)}...)`;
-      const ts = new Date().toLocaleTimeString();
+      // Fetch all positions to pick the best user for the action
+      const userInfos = await Promise.all(users.map(async (u) => {
+        try {
+          const pos = await program.account.userPosition.fetch(u.positionPDA);
+          const collateral = pos.collateralSol.toNumber() / LAMPORTS_PER_SOL;
+          const borrowed = pos.borrowed.toNumber() / 1e6;
+          const maxBorrow = Math.max(0, (collateral * solPrice / colRatio) - borrowed);
+          return { ...u, collateral, borrowed, maxBorrow };
+        } catch (_e) {
+          return { ...u, collateral: 0, borrowed: 0, maxBorrow: 0 };
+        }
+      }));
 
-      console.log(`[${ts}] #${cycle} ${user.name}: util=${util.toFixed(1)}% borr=$${borrows.toFixed(0)} liq=$${liquidity.toFixed(0)} maxBorr=$${maxBorrow.toFixed(0)}`);
-
-      // ===== CHAOTIC STRATEGY: unpredictable swings =====
-      // Sometimes big borrows, sometimes big repays — creates volatility
-      // AI must react to changing utilization
+      // Decide action first based on utilization
       let action: string;
-      let amount: number;
-      const dice = Math.random();
-      const mood = Math.random(); // 0-0.3 = bearish (repay), 0.3-0.7 = mixed, 0.7-1.0 = bullish (borrow)
+      const mood = Math.random();
 
-      // Safety: force repay if util > 85%
-      if (util > 85 && borrowed > 0) {
+      if (util > 85) {
         action = "repay";
-        amount = Math.min(rand(50, 200), borrowed);
-      }
-      // Safety: force borrow if util < 5%
-      else if (util < 5) {
+      } else if (util < 30) {
         action = "borrow";
-        amount = Math.min(rand(50, 200), Math.floor(maxBorrow), Math.floor(liquidity * 0.5));
-      }
-      // Chaotic behavior
-      else if (mood > 0.85) {
-        // WHALE BORROW — big amount, pushes util up fast
+      } else if (mood > 0.85) {
+        action = "borrow"; // whale borrow
+      } else if (mood < 0.15) {
+        action = "repay"; // whale repay
+      } else if (Math.random() < 0.5) {
         action = "borrow";
-        amount = Math.min(rand(100, 300), Math.floor(maxBorrow), Math.floor(liquidity * 0.6));
-      } else if (mood < 0.15 && borrowed > 0) {
-        // WHALE REPAY — big repay, drops util fast
-        action = "repay";
-        amount = Math.min(rand(100, 300), borrowed);
-      } else if (dice < 0.5) {
-        // Normal borrow
-        action = "borrow";
-        amount = Math.min(rand(10, 80), Math.floor(maxBorrow), Math.floor(liquidity * 0.4));
-      } else if (borrowed > 0) {
-        // Normal repay
-        action = "repay";
-        amount = Math.min(rand(10, 60), borrowed);
       } else {
-        action = "borrow";
-        amount = Math.min(rand(20, 60), Math.floor(maxBorrow), Math.floor(liquidity * 0.3));
+        action = "repay";
+      }
+
+      // Pick BEST user for chosen action
+      let user: typeof userInfos[0];
+      if (action === "borrow") {
+        // Pick user with most borrow capacity
+        const canBorrow = userInfos.filter(u => u.maxBorrow > 5);
+        if (canBorrow.length === 0) {
+          // Everyone maxed out, force repay from biggest borrower
+          action = "repay";
+          user = userInfos.reduce((a, b) => a.borrowed > b.borrowed ? a : b);
+        } else {
+          user = canBorrow[Math.floor(Math.random() * canBorrow.length)];
+        }
+      } else {
+        // Pick user with borrows to repay
+        const canRepay = userInfos.filter(u => u.borrowed > 1);
+        if (canRepay.length === 0) {
+          action = "borrow";
+          user = userInfos.reduce((a, b) => a.maxBorrow > b.maxBorrow ? a : b);
+        } else {
+          user = canRepay[Math.floor(Math.random() * canRepay.length)];
+        }
+      }
+      user = user!;
+
+      const ts = new Date().toLocaleTimeString();
+      const userLabel = `${user.name} (${user.keypair.publicKey.toString().slice(0, 6)}...)`;
+
+      console.log(`[${ts}] #${cycle} ${user.name}: util=${util.toFixed(1)}% borr=$${borrows.toFixed(0)} liq=$${liquidity.toFixed(0)} maxBorr=$${user.maxBorrow.toFixed(0)} borrowed=$${user.borrowed.toFixed(0)}`);
+
+      // Determine amount
+      let amount: number;
+      if (action === "borrow") {
+        if (util < 30) {
+          // Aggressive: borrow big to push util up
+          amount = Math.min(rand(100, 400), Math.floor(user.maxBorrow), Math.floor(liquidity * 0.6));
+        } else if (mood > 0.85) {
+          amount = Math.min(rand(100, 300), Math.floor(user.maxBorrow), Math.floor(liquidity * 0.5));
+        } else {
+          amount = Math.min(rand(10, 80), Math.floor(user.maxBorrow), Math.floor(liquidity * 0.4));
+        }
+      } else {
+        if (util > 85) {
+          amount = Math.min(rand(50, 200), Math.floor(user.borrowed));
+        } else if (mood < 0.15) {
+          amount = Math.min(rand(100, 300), Math.floor(user.borrowed));
+        } else {
+          amount = Math.min(rand(10, 60), Math.floor(user.borrowed));
+        }
       }
 
       // Ensure minimum amount
       if (amount < 1) amount = 0;
 
       if (amount <= 0) {
-        console.log(`  Skip: ${action} (no room, maxBorrow=$${maxBorrow.toFixed(0)} borrowed=$${borrowed.toFixed(0)})`);
+        console.log(`  Skip: ${action} (no room, maxBorrow=$${user.maxBorrow.toFixed(0)} borrowed=$${user.borrowed.toFixed(0)})`);
       } else {
         const lamports = Math.floor(amount) * 1_000_000;
         console.log(`  ${user.name}: ${action} $${Math.floor(amount)} aiUSDC...`);
@@ -194,6 +225,14 @@ async function main() {
               .signers([user.keypair])
               .rpc();
           } else {
+            // Accrue interest first so repay includes interest -> feeds insurance fund
+            try {
+              await program.methods.accrueInterest()
+                .accounts({ pool: poolPDA, userPosition: user.positionPDA })
+                .rpc();
+              console.log(`  [accrue] interest accrued for ${user.name}`);
+            } catch (_e) { /* no borrow or already accrued */ }
+
             tx = await program.methods.repay(new anchor.BN(lamports))
               .accounts({
                 pool: poolPDA, poolVault: vaultPDA, tokenMint,
@@ -216,7 +255,7 @@ async function main() {
         }
       }
     } catch (e: any) {
-      console.log(`  ${user.name} fetch error: ${e.message?.slice(0, 80)}`);
+      console.log(`  fetch error: ${e.message?.slice(0, 80)}`);
     }
 
     // Random interval 1-5 min for chaotic timing
