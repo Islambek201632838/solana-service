@@ -1,15 +1,18 @@
 """Pool Router — pool state and stats endpoints."""
 
+import time as _time
 from fastapi import APIRouter, HTTPException
 
 from app.models.schemas import PoolStateResponse, PoolStatsResponse
 from app.services.solana_reader import SolanaReader
+from app.services.activity_service import ActivityService
 from app.config import Settings
 
 router = APIRouter(prefix="/api/pool", tags=["Pool"])
 
 settings = Settings()
 reader = SolanaReader(settings)
+_activity = ActivityService()
 
 
 @router.get("/state", response_model=PoolStateResponse)
@@ -103,9 +106,9 @@ async def get_pool_stats():
         # Step 25: Price staleness
         price_last_updated=state.get("price_last_updated", 0),
         price_stale=_is_price_stale(state.get("price_last_updated", 0)),
-        # Step 35: Insurance Fund
+        # Step 35: Insurance Fund (on-chain + estimated from activity)
         insurance_fund_pct=state.get("insurance_fund_bps", 0) / 100,
-        insurance_balance_usd=state.get("insurance_balance", 0) / 1_000_000,
+        insurance_balance_usd=await _estimate_insurance(state),
         total_bad_debt_covered_usd=state.get("total_bad_debt_covered", 0) / 1_000_000,
         # Supply APY breakdown
         supply_apy_daily=round(lend_rate / 365, 6),
@@ -113,9 +116,82 @@ async def get_pool_stats():
     )
 
 
+async def _estimate_insurance(state: dict) -> float:
+    """
+    Estimate insurance fund balance from activity history.
+
+    For each borrow, we estimate the interest it generated based on:
+    amount * rate_at_time * avg_hold_time / seconds_per_year
+    Insurance = 10% of total estimated interest.
+
+    Falls back to on-chain value if activity DB is unavailable.
+    """
+    on_chain = state.get("insurance_balance", 0) / 1_000_000
+    insurance_pct = state.get("insurance_fund_bps", 0) / 10000  # e.g. 0.10
+
+    try:
+        await _activity.init_db()
+        db = await _activity._connect()
+        try:
+            # Get all borrow/repay activity with rates
+            cursor = await db.execute(
+                "SELECT action, amount, rate_at_time, timestamp FROM activity ORDER BY timestamp"
+            )
+            rows = await cursor.fetchall()
+
+            if not rows:
+                return on_chain
+
+            from datetime import datetime, timezone
+            total_interest = 0.0
+            active_borrows: list[tuple[float, float, float]] = []  # (amount, rate%, timestamp)
+
+            for row in rows:
+                action = row[0]
+                amount = float(row[1])
+                rate = float(row[2])  # percent, e.g. 1.5
+                try:
+                    ts = datetime.fromisoformat(row[3]).timestamp()
+                except Exception:
+                    ts = _time.time()
+
+                if action == "borrow":
+                    active_borrows.append((amount, rate, ts))
+                elif action == "repay":
+                    # Match against oldest borrows (FIFO)
+                    remaining = amount
+                    now = ts
+                    while remaining > 0 and active_borrows:
+                        b_amount, b_rate, b_ts = active_borrows[0]
+                        matched = min(remaining, b_amount)
+                        hold_seconds = max(0, now - b_ts)
+                        # interest = matched * (rate/100) * hold_seconds / seconds_per_year
+                        interest = matched * (b_rate / 100) * hold_seconds / 31_557_600
+                        total_interest += interest
+                        remaining -= matched
+                        if matched >= b_amount:
+                            active_borrows.pop(0)
+                        else:
+                            active_borrows[0] = (b_amount - matched, b_rate, b_ts)
+
+            # Add interest still accruing on active borrows
+            now = _time.time()
+            for b_amount, b_rate, b_ts in active_borrows:
+                hold_seconds = max(0, now - b_ts)
+                interest = b_amount * (b_rate / 100) * hold_seconds / 31_557_600
+                total_interest += interest
+
+            estimated_insurance = total_interest * insurance_pct
+            return max(on_chain, estimated_insurance)
+
+        finally:
+            await db.close()
+    except Exception:
+        return on_chain
+
+
 def _is_price_stale(price_ts: int) -> bool:
     """Price is stale if > 5 minutes old or never set."""
     if price_ts == 0:
         return True
-    import time
-    return (time.time() - price_ts) > 300
+    return (_time.time() - price_ts) > 300
