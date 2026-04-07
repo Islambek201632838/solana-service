@@ -102,7 +102,7 @@ doc.fontSize(11).fillColor(GRAY).text(
   200, 395, { width: 680 }
 );
 doc.fontSize(11).fillColor(GRAY).text(
-  "Применимо: страхование, кредиты, управление активами, risk management.",
+  "Применимо: страхование, кредиты, управление активами, управление рисками.",
   200, 420, { width: 680 }
 );
 
@@ -156,9 +156,9 @@ const models = [
   ["RandomForest", "тренд (up/down/sideways)"],
   ["IsolationForest", "аномалии (крэши, пампы)"],
   ["EWMA", "режим волатильности"],
-  ["CrashDetector", "вероятность обвала (6 сигналов)"],
-  ["RiskScorer", "композитный риск 0-100"],
-  ["UtilizationPredictor", "прогноз утилизации пула"],
+  ["Детектор крэшей", "вероятность обвала (6 сигналов)"],
+  ["Скорер рисков", "композитный риск 0-100"],
+  ["Предиктор утилиз.", "прогноз утилизации пула"],
 ];
 models.forEach((m, i) => {
   const col = i < 3 ? 0 : 1;
@@ -173,7 +173,7 @@ models.forEach((m, i) => {
 card(doc, 60, 400, 840, 50);
 doc.fontSize(11).fillColor(ORANGE).text("Самообучение:", 80, 415);
 doc.fontSize(10).fillColor(GRAY).text(
-  "AI отслеживает точность каждой модели (rolling accuracy) и автоматически перевзвешивает их. Точная модель получает больше влияния. Плохая — меньше (floor 10%).",
+  "AI отслеживает точность каждой модели (скользящая точность) и автоматически перевзвешивает их. Точная модель получает больше влияния. Плохая — меньше (минимум 10%).",
   180, 415, { width: 700 }
 );
 
@@ -207,9 +207,9 @@ instrGroups.forEach((g, i) => {
 doc.fontSize(13).fillColor(PURPLE).text("3 PDA аккаунта хранят ВСЁ состояние on-chain:", 60, 330);
 
 const pdas = [
-  { name: "LendingPool", desc: "deposits, borrows, rates, collateral,\ninsurance, mood, danger_slots, crisis_mode", color: CYAN },
-  { name: "UserPosition", desc: "deposited, borrowed, collateral_sol,\nloyalty_tier, health_factor, credit_score", color: ORANGE },
-  { name: "GuardrailConfig", desc: "min/max_rate, min/max_collateral,\ncooldown, max_change — неизменяемо для AI", color: RED },
+  { name: "LendingPool", desc: "депозиты, займы, ставки, залог,\nстрахование, настроение, кризис", color: CYAN },
+  { name: "UserPosition", desc: "депозит, долг, залог SOL,\nтир лояльности, здоровье, кредитный рейтинг", color: ORANGE },
+  { name: "GuardrailConfig", desc: "мин/макс ставка, мин/макс залог,\nзадержка, макс изменение — неизменяемо для AI", color: RED },
 ];
 pdas.forEach((p, i) => {
   const px = 60 + i * 300;
@@ -235,14 +235,14 @@ bg(doc);
 doc.fontSize(30).fillColor(WHITE).text("Инновации + ", 60, 40, { continued: true }).fillColor(CYAN).text("7 уровней защиты");
 
 // Innovation features
-doc.fontSize(13).fillColor(PURPLE).text("Что нас отличает (Innovation):", 60, 85);
+doc.fontSize(13).fillColor(PURPLE).text("Что нас отличает:", 60, 85);
 const innovations = [
-  [ORANGE, "Dynamic LTV", "AI меняет залог по волатильности: Calm -5%, Storm +10%, Extreme +20%"],
-  [CYAN, "Credit Score", "5 on-chain факторов -> 4 тира. Platinum: -15% залог, -10% ставка"],
-  [RED, "Crash Detection", "6 сигналов предсказывают крэш ЗАРАНЕЕ. >80% = авто-freeze"],
-  [PURPLE, "Monte Carlo", "500 симуляций -> вероятность ликвидации на 1ч/4ч/24ч"],
+  [ORANGE, "Динамический залог", "AI меняет залог по волатильности: спокойно -5%, шторм +10%, экстрим +20%"],
+  [CYAN, "Кредитный рейтинг", "5 on-chain факторов -> 4 тира. Платина: -15% залог, -10% ставка"],
+  [RED, "Детекция крэшей", "6 сигналов предсказывают обвал ЗАРАНЕЕ. >80% = авто-заморозка"],
+  [PURPLE, "Монте-Карло", "500 симуляций -> вероятность ликвидации на 1ч/4ч/24ч"],
   [ORANGE, "Самообучение", "Репутация моделей: точные получают больше веса автоматически"],
-  [CYAN, "Sentiment Filter", "Шум (твиты) vs серьёзное (SEC). Gemini NLP классификация"],
+  [CYAN, "Фильтр новостей", "Шум (твиты) vs серьёзное (SEC). Gemini NLP классификация"],
 ];
 innovations.forEach((f, i) => {
   const fy = 110 + i * 26;
@@ -251,12 +251,12 @@ innovations.forEach((f, i) => {
 });
 
 // 7 safety layers
-doc.fontSize(13).fillColor(PURPLE).text("7 уровней безопасности (Guard Rails):", 60, 280);
+doc.fontSize(13).fillColor(PURPLE).text("7 уровней безопасности:", 60, 280);
 const layers = [
   { n: "1", title: "Промпт", desc: "Жёсткий формат\nвывода Gemini", color: PURPLE },
   { n: "2", title: "Валидатор", desc: "11 правил ДО\nотправки TX", color: CYAN },
-  { n: "3", title: "Контракт", desc: "On-chain лимиты:\nставка, залог, cooldown", color: CYAN },
-  { n: "4", title: "AI Freeze", desc: "Авто-freeze\nпри risk > 90", color: RED },
+  { n: "3", title: "Контракт", desc: "Лимиты on-chain:\nставка, залог, задержка", color: CYAN },
+  { n: "4", title: "Заморозка", desc: "Авто-заморозка\nпри риске > 90", color: RED },
 ];
 layers.forEach((l, i) => {
   const lx = 60 + i * 220;
@@ -267,9 +267,9 @@ layers.forEach((l, i) => {
 });
 
 const layers2 = [
-  { n: "5", title: "Auto-Rate", desc: "Контракт сам\nзащищает если AI умер", color: ORANGE },
-  { n: "6", title: "Insurance", desc: "10% процентов ->\nстраховой фонд", color: PURPLE },
-  { n: "7", title: "Guardrail PDA", desc: "Только authority\nменяет параметры", color: CYAN },
+  { n: "5", title: "Авто-ставка", desc: "Контракт сам\nзащищает если AI умер", color: ORANGE },
+  { n: "6", title: "Страхование", desc: "10% процентов ->\nстраховой фонд", color: PURPLE },
+  { n: "7", title: "Защитный PDA", desc: "Только администратор\nменяет параметры", color: CYAN },
 ];
 layers2.forEach((l, i) => {
   const lx = 130 + i * 250;
@@ -286,14 +286,14 @@ footer(doc, "SolanaAI Lend", "5 / 7");
 // ════════════════════════════════════════════════
 doc.addPage({ size: [W, H], margin: 0 });
 bg(doc);
-doc.fontSize(30).fillColor(WHITE).text("Архитектура + ", 60, 40, { continued: true }).fillColor(CYAN).text("UX");
+doc.fontSize(30).fillColor(WHITE).text("Архитектура + ", 60, 40, { continued: true }).fillColor(CYAN).text("интерфейс");
 
 // Architecture
 const arch = [
-  { name: "Smart Contract", desc: "Anchor/Rust, 23 инструкции\n3 PDA, Events, Guard Rails", color: RED },
-  { name: "AI Agent", desc: "Python, 3 процесса\nGemini + 6 ML + Sentiment", color: ORANGE },
-  { name: "Backend", desc: "FastAPI, WebSocket\nSQLite, Solana RPC", color: PURPLE },
-  { name: "Frontend", desc: "React + Vite + Tailwind\nEN/RU, Adaptive, Wallet", color: CYAN },
+  { name: "Смарт-контракт", desc: "Anchor/Rust, 23 инструкции\n3 PDA, события, защитные ограничения", color: RED },
+  { name: "AI-агент", desc: "Python, 3 процесса\nGemini + 6 ML + анализ новостей", color: ORANGE },
+  { name: "Бэкенд", desc: "FastAPI, WebSocket\nSQLite, Solana RPC", color: PURPLE },
+  { name: "Фронтенд", desc: "React + Vite + Tailwind\nEN/RU, адаптивный, кошелёк", color: CYAN },
 ];
 arch.forEach((a, i) => {
   card(doc, 60, 80 + i * 60, 420, 52);
@@ -316,15 +316,15 @@ stats.forEach((s, i) => {
 });
 
 // UX features
-doc.fontSize(13).fillColor(PURPLE).text("UX и Product Thinking:", 60, 330);
+doc.fontSize(13).fillColor(PURPLE).text("Пользовательский опыт:", 60, 330);
 const ux = [
-  "Dashboard: все метрики в одном месте — депозиты, займы, health, insurance, mood",
-  "AI Decisions: карточки решений с ML метриками + reasoning на EN/RU",
-  "Simulator: \"что если AI изменит ставку\" — интерактивная симуляция",
-  "Credit Score: персональный виджет с тиром и скидками",
-  "Liquidation Queue: позиции под угрозой + Monte Carlo предсказание",
-  "Адаптивный UI: desktop + mobile, 2 языка (EN/RU)",
-  "Wallet Connect: Phantom / Solflare для реальных транзакций",
+  "Дашборд: все метрики в одном месте — депозиты, займы, здоровье, страховка, настроение",
+  "AI решения: карточки решений с ML метриками + объяснение на EN/RU",
+  "Симулятор: \"что если AI изменит ставку\" — интерактивная симуляция",
+  "Кредитный рейтинг: персональный виджет с тиром и скидками",
+  "Очередь ликвидаций: позиции под угрозой + Монте-Карло предсказание",
+  "Адаптивный интерфейс: компьютер + мобильный, 2 языка (EN/RU)",
+  "Подключение кошелька: Phantom / Solflare для реальных транзакций",
 ];
 ux.forEach((u, i) => {
   doc.fontSize(9.5).fillColor(CYAN).text("•", 70, 355 + i * 18);
@@ -347,10 +347,10 @@ doc.fontSize(18).fillColor(WHITE).text("AI думает. Контракт кон
 // Key proof points for judges
 card(doc, 180, 230, 600, 120);
 doc.fontSize(12).fillColor(PURPLE).text("Для жюри — чек-лист кейса 2:", 200, 245);
-doc.fontSize(10).fillColor(CYAN).text("✓", 200, 268); doc.fontSize(10).fillColor(GRAY).text("AI принимает решения (6 ML + Gemini)", 215, 268, { width: 540 });
-doc.fontSize(10).fillColor(CYAN).text("✓", 200, 286); doc.fontSize(10).fillColor(GRAY).text("Решения исполняются on-chain (4 типа TX)", 215, 286, { width: 540 });
-doc.fontSize(10).fillColor(CYAN).text("✓", 200, 304); doc.fontSize(10).fillColor(GRAY).text("Полная автономность (24/7, каждые 2 мин, без человека)", 215, 304, { width: 540 });
-doc.fontSize(10).fillColor(CYAN).text("✓", 200, 322); doc.fontSize(10).fillColor(GRAY).text("Проверяемо: каждое решение = TX в Solana Explorer", 215, 322, { width: 540 });
+doc.fontSize(10).fillColor(CYAN).text("+", 200, 270); doc.fontSize(10).fillColor(GRAY).text("AI принимает решения (6 ML моделей + Gemini)", 215, 270, { width: 540 });
+doc.fontSize(10).fillColor(CYAN).text("+", 200, 290); doc.fontSize(10).fillColor(GRAY).text("Решения исполняются on-chain (4 типа транзакций)", 215, 290, { width: 540 });
+doc.fontSize(10).fillColor(CYAN).text("+", 200, 310); doc.fontSize(10).fillColor(GRAY).text("Полная автономность (24/7, каждые 2 мин, без человека)", 215, 310, { width: 540 });
+doc.fontSize(10).fillColor(CYAN).text("+", 200, 330); doc.fontSize(10).fillColor(GRAY).text("Проверяемо: каждое решение = транзакция в Solana Explorer", 215, 330, { width: 540 });
 
 doc.fontSize(14).fillColor(CYAN).text("http://89.207.255.254", 0, 385, { align: "center" });
 doc.fontSize(11).fillColor(PURPLE).text("github.com/Islambek201632838/solana-service", 0, 408, { align: "center" });
